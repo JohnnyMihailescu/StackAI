@@ -2,12 +2,9 @@
 
 from fastapi import APIRouter, HTTPException, status
 from app.models.document import Document
-from app.routers.libraries import libraries_db
+from app.services.storage_service import StorageService
 
 router = APIRouter()
-
-# In-memory storage for documents
-documents_db: dict[str, Document] = {}
 
 
 @router.post(
@@ -18,7 +15,7 @@ documents_db: dict[str, Document] = {}
 async def create_document(library_id: str, document: Document):
     """Create a new document in a library."""
     # Verify library exists
-    if library_id not in libraries_db:
+    if not await StorageService.libraries().exists(library_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Library with id '{library_id}' not found"
@@ -28,36 +25,25 @@ async def create_document(library_id: str, document: Document):
     if document.library_id != library_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Document library_id must match URL library_id"
+            detail="Document library_id must match URL library_id"
         )
 
-    # Check if document already exists
-    if document.id in documents_db:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Document with id '{document.id}' already exists"
-        )
-
-    documents_db[document.id] = document
-    return document
+    try:
+        return await StorageService.documents().create(document)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
 
 @router.get("/libraries/{library_id}/documents", response_model=list[Document])
 async def list_documents(library_id: str):
     """List all documents in a library."""
-    # Verify library exists
-    if library_id not in libraries_db:
+    if not await StorageService.libraries().exists(library_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Library with id '{library_id}' not found"
         )
 
-    # Filter documents by library_id
-    library_documents = [
-        doc for doc in documents_db.values()
-        if doc.library_id == library_id
-    ]
-    return library_documents
+    return await StorageService.documents().list_by_library(library_id)
 
 
 @router.get(
@@ -66,15 +52,13 @@ async def list_documents(library_id: str):
 )
 async def get_document(library_id: str, document_id: str):
     """Get a specific document."""
-    if document_id not in documents_db:
+    document = await StorageService.documents().get(document_id)
+    if document is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Document with id '{document_id}' not found"
         )
 
-    document = documents_db[document_id]
-
-    # Verify document belongs to the specified library
     if document.library_id != library_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -90,20 +74,19 @@ async def get_document(library_id: str, document_id: str):
 )
 async def delete_document(library_id: str, document_id: str):
     """Delete a document and all its chunks."""
-    if document_id not in documents_db:
+    document = await StorageService.documents().get(document_id)
+    if document is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Document with id '{document_id}' not found"
         )
 
-    document = documents_db[document_id]
-
-    # Verify document belongs to the specified library
     if document.library_id != library_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Document '{document_id}' not found in library '{library_id}'"
         )
 
-    # TODO: Also delete associated chunks when chunk endpoints are implemented
-    del documents_db[document_id]
+    # Delete associated chunks first
+    await StorageService.chunks().delete_by_document(document_id)
+    await StorageService.documents().delete(document_id)

@@ -13,3 +13,6 @@ stackai/
 # Environment variables
 .env
 .env.local
+
+# Persisted data
+data/

@@ -1,12 +1,14 @@
 """Tests for batch chunks endpoint."""
 
+import asyncio
 import pytest
 from unittest.mock import patch
 from fastapi.testclient import TestClient
 from app.main import app
-from app.routers.chunks import chunks_db
-from app.routers.documents import documents_db
+from app.services.storage_service import StorageService
 from app.models.document import Document
+from app.models.library import Library
+from app.models.chunk import Chunk
 
 
 # Mock embedding dimension (Cohere embed-english-v3.0 uses 1024)
@@ -23,12 +25,10 @@ class TestBatchChunksEndpoint:
 
     @pytest.fixture(autouse=True)
     def setup(self):
-        """Clear databases before each test."""
-        chunks_db.clear()
-        documents_db.clear()
+        """Initialize and clear storage before each test."""
+        asyncio.run(StorageService.initialize(persist=False))
         yield
-        chunks_db.clear()
-        documents_db.clear()
+        asyncio.run(StorageService.clear_all())
 
     @pytest.fixture
     def client(self):
@@ -41,9 +41,11 @@ class TestBatchChunksEndpoint:
 
     @pytest.fixture
     def sample_document(self):
-        """Create a sample document in the database."""
+        """Create a sample library and document in storage."""
+        lib = Library(id="lib_1", name="Test Library")
         doc = Document(id="doc_123", library_id="lib_1", name="Test Doc")
-        documents_db[doc.id] = doc
+        asyncio.run(StorageService.libraries().create(lib))
+        asyncio.run(StorageService.documents().create(doc))
         return doc
 
     def test_create_batch_success(self, client, sample_document):
@@ -108,9 +110,8 @@ class TestBatchChunksEndpoint:
     def test_create_batch_existing_ids(self, client, sample_document):
         """Test batch creation fails when IDs already exist in database."""
         # Create an existing chunk
-        from app.models.chunk import Chunk
-        existing = Chunk(id="chunk_1", document_id="doc_123", text="Existing")
-        chunks_db["chunk_1"] = existing
+        existing = Chunk(id="chunk_1", document_id="doc_123", text="Existing", embedding=[0.1] * MOCK_EMBEDDING_DIM)
+        asyncio.run(StorageService.chunks().create(existing))
 
         payload = {
             "chunks": [

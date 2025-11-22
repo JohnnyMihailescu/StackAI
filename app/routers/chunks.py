@@ -3,15 +3,12 @@
 import numpy as np
 from fastapi import APIRouter, HTTPException, status
 from app.models.chunk import Chunk, BatchChunksRequest, BatchChunksResponse
-from app.routers.documents import documents_db
 from app.config import settings
 from app.services.embeddings import EmbeddingService
 from app.services.search_service import SearchService
+from app.services.storage_service import StorageService
 
 router = APIRouter()
-
-# In-memory storage for chunks
-chunks_db: dict[str, Chunk] = {}
 
 
 @router.post(
@@ -19,13 +16,11 @@ chunks_db: dict[str, Chunk] = {}
     response_model=Chunk,
     status_code=status.HTTP_201_CREATED
 )
-def create_chunk(document_id: str, chunk: Chunk):
-    """Create a new chunk in a document.
-
-    Note: The embedding will be generated automatically if not provided.
-    """
+async def create_chunk(document_id: str, chunk: Chunk):
+    """Create a new chunk in a document."""
     # Verify document exists
-    if document_id not in documents_db:
+    document = await StorageService.documents().get(document_id)
+    if document is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Document with id '{document_id}' not found"
@@ -35,28 +30,24 @@ def create_chunk(document_id: str, chunk: Chunk):
     if chunk.document_id != document_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Chunk document_id must match URL document_id"
-        )
-
-    # Check if chunk already exists
-    if chunk.id in chunks_db:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Chunk with id '{chunk.id}' already exists"
+            detail="Chunk document_id must match URL document_id"
         )
 
     # Generate embedding
     embedding = EmbeddingService.embed_texts([chunk.text])[0]
     chunk.embedding = embedding
 
-    chunks_db[chunk.id] = chunk
+    # Store chunk
+    try:
+        created_chunk = await StorageService.chunks().create(chunk)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
     # Add to vector index
-    library_id = documents_db[document_id].library_id
     vectors = np.array([embedding])
-    SearchService.add_vectors(library_id, vectors, [chunk.id])
+    SearchService.add_vectors(document.library_id, vectors, [chunk.id])
 
-    return chunk
+    return created_chunk
 
 
 @router.post(
@@ -64,11 +55,8 @@ def create_chunk(document_id: str, chunk: Chunk):
     response_model=BatchChunksResponse,
     status_code=status.HTTP_201_CREATED
 )
-def create_chunks_batch(document_id: str, request: BatchChunksRequest):
-    """Create multiple chunks in a document at once.
-
-    Note: Embeddings will be generated automatically if not provided.
-    """
+async def create_chunks_batch(document_id: str, request: BatchChunksRequest):
+    """Create multiple chunks in a document at once."""
     # Validate batch size
     if len(request.chunks) > settings.max_batch_size:
         raise HTTPException(
@@ -77,7 +65,8 @@ def create_chunks_batch(document_id: str, request: BatchChunksRequest):
         )
 
     # Verify document exists
-    if document_id not in documents_db:
+    document = await StorageService.documents().get(document_id)
+    if document is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Document with id '{document_id}' not found"
@@ -101,72 +90,66 @@ def create_chunks_batch(document_id: str, request: BatchChunksRequest):
         )
 
     # Check for existing IDs in database
-    existing_ids = [id for id in batch_ids if id in chunks_db]
+    existing_ids = await StorageService.chunks().find_existing(batch_ids)
     if existing_ids:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"Chunks with these IDs already exist: {existing_ids}"
         )
 
-    # Generate embeddings for all chunks (batched internally)
+    # Generate embeddings for all chunks
     texts = [chunk.text for chunk in request.chunks]
     embeddings = EmbeddingService.embed_texts(texts)
 
-    # Assign embeddings and store chunks
+    # Assign embeddings to chunks
     for chunk, embedding in zip(request.chunks, embeddings):
         chunk.embedding = embedding
-        chunks_db[chunk.id] = chunk
+
+    # Store chunks
+    created_chunks = await StorageService.chunks().create_batch(request.chunks)
 
     # Add all vectors to index
-    library_id = documents_db[document_id].library_id
     vectors = np.array(embeddings)
-    chunk_ids = [chunk.id for chunk in request.chunks]
-    SearchService.add_vectors(library_id, vectors, chunk_ids)
+    chunk_ids = [chunk.id for chunk in created_chunks]
+    SearchService.add_vectors(document.library_id, vectors, chunk_ids)
 
     return BatchChunksResponse(
-        created_count=len(request.chunks),
-        chunks=request.chunks
+        created_count=len(created_chunks),
+        chunks=created_chunks
     )
 
 
 @router.get("/documents/{document_id}/chunks", response_model=list[Chunk])
-def list_chunks(document_id: str):
+async def list_chunks(document_id: str):
     """List all chunks in a document."""
-    # Verify document exists
-    if document_id not in documents_db:
+    if not await StorageService.documents().exists(document_id):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Document with id '{document_id}' not found"
         )
 
-    # Filter chunks by document_id
-    document_chunks = [
-        chunk for chunk in chunks_db.values()
-        if chunk.document_id == document_id
-    ]
-    return document_chunks
+    return await StorageService.chunks().list_by_document(document_id)
 
 
 @router.get("/chunks/{chunk_id}", response_model=Chunk)
-def get_chunk(chunk_id: str):
+async def get_chunk(chunk_id: str):
     """Get a specific chunk by ID."""
-    if chunk_id not in chunks_db:
+    chunk = await StorageService.chunks().get(chunk_id)
+    if chunk is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Chunk with id '{chunk_id}' not found"
         )
-
-    return chunks_db[chunk_id]
+    return chunk
 
 
 @router.delete("/chunks/{chunk_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_chunk(chunk_id: str):
+async def delete_chunk(chunk_id: str):
     """Delete a chunk."""
-    if chunk_id not in chunks_db:
+    deleted = await StorageService.chunks().delete(chunk_id)
+    if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Chunk with id '{chunk_id}' not found"
         )
-
-    # TODO: Remove from vector index when implemented
-    del chunks_db[chunk_id]
+    # TODO: Remove from vector index

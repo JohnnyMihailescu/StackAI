@@ -5,12 +5,14 @@ from fastapi import FastAPI
 from app.config import settings
 from app.routers import libraries, documents, chunks, search
 from app.services.embeddings import EmbeddingService
+from app.services.storage_service import StorageService
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan."""
     EmbeddingService.initialize()
+    await StorageService.initialize()
     yield
 
 

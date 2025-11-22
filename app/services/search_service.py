@@ -37,7 +37,7 @@ class SearchService:
         index.add(vectors, ids)
 
     @classmethod
-    def search(
+    async def search(
         cls, library_id: str, query_vector: np.ndarray, k: int
     ) -> list["SearchResult"]:
         """Search for similar chunks in a library's index.
@@ -50,16 +50,15 @@ class SearchService:
         Returns:
             List of SearchResult objects, sorted by similarity (highest first)
         """
-        # Lazy imports to avoid circular dependencies
         from app.models.search import SearchResult
-        from app.routers.chunks import chunks_db
+        from app.services.storage_service import StorageService
 
         index = cls._get_index(library_id)
         raw_results = index.search(query_vector, k)
 
         results = []
         for chunk_id, score in raw_results:
-            chunk = chunks_db.get(chunk_id)
+            chunk = await StorageService.chunks().get(chunk_id)
             if chunk:
                 results.append(SearchResult(chunk=chunk, score=score))
 
