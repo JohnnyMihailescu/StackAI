@@ -3,7 +3,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from app.config import settings
-from app.routers import libraries, documents, chunks
+from app.routers import libraries, documents, chunks, search
 from app.services.embeddings import EmbeddingService
 
 
@@ -25,6 +25,7 @@ app = FastAPI(
 app.include_router(libraries.router, prefix="/api/v1", tags=["libraries"])
 app.include_router(documents.router, prefix="/api/v1", tags=["documents"])
 app.include_router(chunks.router, prefix="/api/v1", tags=["chunks"])
+app.include_router(search.router, prefix="/api/v1", tags=["search"])
 
 
 @app.get("/")

@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     # Batch processing limits
     max_batch_size: int = 500  # Max chunks per batch request
 
+    # Search defaults
+    default_search_k: int = 10  # Default number of search results
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

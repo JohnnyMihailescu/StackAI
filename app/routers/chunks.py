@@ -1,10 +1,12 @@
 """Chunk router - CRUD operations for chunks within documents."""
 
+import numpy as np
 from fastapi import APIRouter, HTTPException, status
 from app.models.chunk import Chunk, BatchChunksRequest, BatchChunksResponse
 from app.routers.documents import documents_db
 from app.config import settings
 from app.services.embeddings import EmbeddingService
+from app.services.search_service import SearchService
 
 router = APIRouter()
 
@@ -48,6 +50,12 @@ def create_chunk(document_id: str, chunk: Chunk):
     chunk.embedding = embedding
 
     chunks_db[chunk.id] = chunk
+
+    # Add to vector index
+    library_id = documents_db[document_id].library_id
+    vectors = np.array([embedding])
+    SearchService.add_vectors(library_id, vectors, [chunk.id])
+
     return chunk
 
 
@@ -108,6 +116,12 @@ def create_chunks_batch(document_id: str, request: BatchChunksRequest):
     for chunk, embedding in zip(request.chunks, embeddings):
         chunk.embedding = embedding
         chunks_db[chunk.id] = chunk
+
+    # Add all vectors to index
+    library_id = documents_db[document_id].library_id
+    vectors = np.array(embeddings)
+    chunk_ids = [chunk.id for chunk in request.chunks]
+    SearchService.add_vectors(library_id, vectors, chunk_ids)
 
     return BatchChunksResponse(
         created_count=len(request.chunks),
