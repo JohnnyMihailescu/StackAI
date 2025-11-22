@@ -1,17 +1,30 @@
 """FastAPI application entry point."""
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from app.config import settings
-from app.routers import libraries
+from app.routers import libraries, documents, chunks
+from app.services.embeddings import EmbeddingService
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application lifespan."""
+    EmbeddingService.initialize()
+    yield
+
 
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
-    description="A vector database API built with FastAPI"
+    description="A vector database API built with FastAPI",
+    lifespan=lifespan,
 )
 
 # Include routers
 app.include_router(libraries.router, prefix="/api/v1", tags=["libraries"])
+app.include_router(documents.router, prefix="/api/v1", tags=["documents"])
+app.include_router(chunks.router, prefix="/api/v1", tags=["chunks"])
 
 
 @app.get("/")
