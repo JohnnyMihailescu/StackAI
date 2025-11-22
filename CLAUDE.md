@@ -51,13 +51,28 @@ app/
 ├── routers/
 │   ├── libraries.py           # Library CRUD endpoints
 │   ├── documents.py           # Document CRUD endpoints
-│   └── chunks.py              # Chunk CRUD + batch endpoints
+│   ├── chunks.py              # Chunk CRUD + batch endpoints
+│   └── search.py              # Similarity search endpoint
 ├── services/
 │   ├── embeddings.py          # Cohere embedding service
+│   ├── storage_service.py     # Singleton for storage access
+│   ├── search_service.py      # Vector search orchestration
 │   └── indexes/
 │       ├── base.py            # Abstract BaseIndex interface
 │       └── flat_index.py      # Brute-force cosine similarity search
-└── storage/                   # Placeholder for persistence layer
+└── storage/
+    ├── rwlock.py              # Async Reader-Writer lock
+    ├── base_store.py          # Abstract base for entity stores
+    ├── library_store.py       # Library CRUD with locking
+    ├── document_store.py      # Document CRUD with locking
+    ├── chunk_store.py         # Chunk CRUD + embeddings with locking
+    └── file_io_utils.py       # Atomic file I/O utilities
+
+data/                          # Persisted data (gitignored)
+├── libraries.json
+├── documents.json
+├── chunks.json
+└── embeddings.npz
 
 tests/
 ├── test_flat_index.py         # 33 tests for FlatIndex
@@ -130,7 +145,7 @@ All indexes implement the `BaseIndex` interface:
 
 ## Key Design Decisions
 
-1. **In-memory storage first:** Using Python dictionaries for now. Persistence will be added later.
+1. **Thread-safe storage with RWLock:** All data access goes through `StorageService` which uses async Reader-Writer locks for concurrency control.
 
 2. **Pre-chunked documents:** No automatic chunking. Users provide documents already split into chunks.
 
@@ -139,6 +154,81 @@ All indexes implement the `BaseIndex` interface:
 4. **From-scratch indexing:** Implementing vector indexes without external libraries for learning purposes.
 
 5. **Cohere embeddings:** Using Cohere's API for generating embeddings rather than local models.
+
+6. **Persistence without database:** JSON for metadata, NumPy binary for embeddings. No external database dependencies.
+
+## Storage & Concurrency
+
+**IMPORTANT:** All code MUST follow async patterns. This is critical for thread-safety.
+
+### Architecture
+
+```
+Routers → StorageService → Individual Stores (with RWLock) → Persistence
+```
+
+- **StorageService** (`app/services/storage_service.py`): Singleton providing access to all stores
+- **Stores** (`app/storage/`): Each entity type has its own store with RWLock protection
+- **Persistence**: JSON for metadata, NumPy `.npz` for embeddings
+
+### Async Requirements
+
+All endpoint handlers and storage operations MUST be `async`:
+
+```python
+# CORRECT - async endpoint using await
+@router.get("/libraries/{library_id}")
+async def get_library(library_id: str):
+    library = await StorageService.libraries().get(library_id)
+    ...
+
+# WRONG - sync endpoint (breaks concurrency)
+@router.get("/libraries/{library_id}")
+def get_library(library_id: str):
+    ...
+```
+
+### Reader-Writer Lock Pattern
+
+The `AsyncRWLock` allows multiple concurrent readers OR a single exclusive writer:
+
+```python
+# Multiple readers can run simultaneously
+async with self._lock.read():
+    return self._data.get(item_id)
+
+# Writers get exclusive access
+async with self._lock.write():
+    self._data[item_id] = item
+    self._save()
+```
+
+**Why this matters:**
+- 20 users searching simultaneously → all proceed concurrently (read locks)
+- 1 user writing while 19 read → writer waits for readers, then gets exclusive access
+- Prevents race conditions and data corruption
+
+### Adding New Entities
+
+To add a new entity type:
+
+1. Create model in `app/models/`
+2. Create store extending `BaseStore[YourModel]` in `app/storage/`
+3. Implement `_get_id()`, `_save()`, and `load()` methods
+4. Add to `StorageService` as a new store
+5. Create router with `async def` endpoints that `await` storage calls
+
+### Testing
+
+In tests, initialize storage with `persist=False`:
+
+```python
+@pytest.fixture(autouse=True)
+def setup(self):
+    asyncio.run(StorageService.initialize(persist=False))
+    yield
+    asyncio.run(StorageService.clear_all())
+```
 
 ## Embedding Service
 
@@ -166,8 +256,6 @@ Settings loaded from `.env` via pydantic-settings (`app/config.py`):
 
 ## Current Limitations / TODOs
 
-- **In-memory only:** All data stored in Python dicts, lost on restart
-- **Index not wired up:** FlatIndex exists but chunks aren't added to it yet
-- **No search endpoint:** Can't query vectors yet
-- **Delete cascading:** Deleting a document doesn't delete its chunks
-- **Delete from index:** Deleting a chunk doesn't remove it from the index
+- **Delete from index:** Deleting a chunk doesn't remove it from the vector index
+- **Index persistence:** FlatIndex is rebuilt from embeddings on startup (not persisted separately)
+- **No index rebuild on startup:** Need to rebuild SearchService indexes from stored embeddings when server starts
