@@ -1,5 +1,6 @@
 """Chunk router - CRUD operations for chunks within documents."""
 
+import logging
 import numpy as np
 from fastapi import APIRouter, HTTPException, status
 from app.models.chunk import Chunk, BatchChunksRequest, BatchChunksResponse
@@ -7,6 +8,8 @@ from app.config import settings
 from app.services.embeddings import EmbeddingService
 from app.services.search_service import SearchService
 from app.services.storage_service import StorageService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -33,6 +36,8 @@ async def create_chunk(document_id: str, chunk: Chunk):
             detail="Chunk document_id must match URL document_id"
         )
 
+    logger.info(f"Creating chunk: text='{chunk.text[:50]}...' (document='{document.name}')")
+
     # Generate embedding
     embedding = EmbeddingService.embed_texts([chunk.text])[0]
     chunk.embedding = embedding
@@ -47,6 +52,7 @@ async def create_chunk(document_id: str, chunk: Chunk):
     vectors = np.array([embedding])
     SearchService.add_vectors(document.library_id, vectors, [chunk.id])
 
+    logger.info(f"Chunk created (document='{document.name}')")
     return created_chunk
 
 
@@ -97,6 +103,8 @@ async def create_chunks_batch(document_id: str, request: BatchChunksRequest):
             detail=f"Chunks with these IDs already exist: {existing_ids}"
         )
 
+    logger.info(f"Creating {len(request.chunks)} chunks (document='{document.name}')")
+
     # Generate embeddings for all chunks
     texts = [chunk.text for chunk in request.chunks]
     embeddings = EmbeddingService.embed_texts(texts)
@@ -113,6 +121,7 @@ async def create_chunks_batch(document_id: str, request: BatchChunksRequest):
     chunk_ids = [chunk.id for chunk in created_chunks]
     SearchService.add_vectors(document.library_id, vectors, chunk_ids)
 
+    logger.info(f"Batch complete: {len(created_chunks)} chunks created (document='{document.name}')")
     return BatchChunksResponse(
         created_count=len(created_chunks),
         chunks=created_chunks
@@ -158,9 +167,13 @@ async def delete_chunk(chunk_id: str):
     document = await StorageService.documents().get(chunk.document_id)
     library_id = document.library_id if document else None
 
+    logger.info(f"Deleting chunk (document='{document.name if document else 'unknown'}')")
+
     # Delete from storage
     await StorageService.chunks().delete(chunk_id)
 
     # Remove from vector index
     if library_id:
         SearchService.delete_vectors(library_id, [chunk_id])
+
+    logger.info("Chunk deleted")

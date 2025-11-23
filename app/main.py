@@ -1,22 +1,42 @@
 """FastAPI application entry point."""
 
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI
 from app.config import settings
+from app.logging_config import setup_logging
 from app.routers import libraries, documents, chunks, search
 from app.services.embeddings import EmbeddingService
 from app.services.search_service import SearchService
 from app.services.storage_service import StorageService
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifespan."""
+    setup_logging()
+    logger.info("Starting StackAI Vector DB Server...")
+
+    logger.info("Initializing embedding service")
     EmbeddingService.initialize()
+
+    logger.info("Loading storage from disk")
     await StorageService.initialize()
+    stats = StorageService.get_stats()
+    logger.info(
+        f"Storage loaded: {stats['libraries']} libraries, "
+        f"{stats['documents']} documents, {stats['chunks']} chunks"
+    )
+
+    logger.info("Initializing search indexes")
     SearchService.initialize(Path(settings.data_dir) / "indexes")
+
+    logger.info("StackAI Vector DB Server ready")
     yield
+    logger.info("Shutting down StackAI Vector DB Server")
 
 
 app = FastAPI(

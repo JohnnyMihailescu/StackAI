@@ -1,7 +1,10 @@
 """Embedding service using Cohere API."""
 
+import logging
 import cohere
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class EmbeddingService:
@@ -31,9 +34,13 @@ class EmbeddingService:
 
         all_embeddings = []
         batch_size = settings.cohere_batch_size
+        num_batches = (len(texts) + batch_size - 1) // batch_size
+
+        logger.info(f"Embedding {len(texts)} texts ({num_batches} batch(es))")
 
         for i in range(0, len(texts), batch_size):
             batch = texts[i : i + batch_size]
+            logger.debug(f"Embedding batch {i // batch_size + 1}/{num_batches}")
             response = cls._client.embed(
                 texts=batch,
                 model=settings.cohere_embed_model,
@@ -53,6 +60,7 @@ class EmbeddingService:
         Returns:
             Embedding vector for the query.
         """
+        logger.debug("Embedding query text")
         response = cls._client.embed(
             texts=[text],
             model=settings.cohere_embed_model,

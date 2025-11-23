@@ -1,8 +1,11 @@
 """Search service for managing vector indexes and performing searches."""
 
+import logging
 from pathlib import Path
 import numpy as np
 from app.services.indexes import FlatIndex
+
+logger = logging.getLogger(__name__)
 
 
 class SearchService:
@@ -36,6 +39,8 @@ class SearchService:
                 library_id = index_file.stem
                 cls._indexes[library_id] = FlatIndex.load(index_file)
 
+            logger.info(f"Loaded {len(cls._indexes)} search index(es) from disk")
+
     @classmethod
     def _get_index_path(cls, library_id: str) -> Path:
         """Get the file path for a library's index."""
@@ -66,6 +71,7 @@ class SearchService:
         """
         index = cls._get_index(library_id)
         index.add(vectors, ids)
+        logger.debug(f"Added {len(ids)} vectors to index (total: {index.num_vectors})")
 
         if cls._persist:
             index.save(cls._get_index_path(library_id))

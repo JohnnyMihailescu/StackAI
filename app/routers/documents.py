@@ -1,9 +1,12 @@
 """Document router - CRUD operations for documents within libraries."""
 
+import logging
 from fastapi import APIRouter, HTTPException, status
 from app.models.document import Document
 from app.services.search_service import SearchService
 from app.services.storage_service import StorageService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -29,8 +32,11 @@ async def create_document(library_id: str, document: Document):
             detail="Document library_id must match URL library_id"
         )
 
+    logger.info(f"Creating document: name='{document.name}'")
     try:
-        return await StorageService.documents().create(document)
+        result = await StorageService.documents().create(document)
+        logger.info(f"Document created: name='{document.name}'")
+        return result
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
 
@@ -88,6 +94,8 @@ async def delete_document(library_id: str, document_id: str):
             detail=f"Document '{document_id}' not found in library '{library_id}'"
         )
 
+    logger.info(f"Deleting document: name='{document.name}'")
+
     # Get chunk IDs before deleting (needed to remove from index)
     chunks = await StorageService.chunks().list_by_document(document_id)
     chunk_ids = [c.id for c in chunks]
@@ -100,3 +108,4 @@ async def delete_document(library_id: str, document_id: str):
         SearchService.delete_vectors(library_id, chunk_ids)
 
     await StorageService.documents().delete(document_id)
+    logger.info(f"Document deleted: name='{document.name}' ({len(chunks)} chunks removed)")
