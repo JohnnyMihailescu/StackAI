@@ -75,6 +75,7 @@ docker compose down -v
 app/
 ├── main.py                    # FastAPI app with lifespan management
 ├── config.py                  # Settings via pydantic-settings
+├── logging_config.py          # Logging setup
 ├── models/
 │   ├── library.py             # Library model
 │   ├── document.py            # Document model
@@ -100,10 +101,11 @@ app/
     └── file_io_utils.py       # Atomic file I/O utilities
 
 data/                          # Persisted data (gitignored)
-├── libraries.json
-├── documents.json
-├── chunks.json
-└── embeddings.npz
+├── libraries.json             # Library metadata (JSON dict keyed by ID)
+├── documents.json             # Document metadata (JSON dict keyed by ID)
+├── chunks.json                # Chunk metadata + embeddings (JSON dict keyed by ID)
+└── indexes/                   # Vector indexes, one .npz file per library
+    └── {library_id}.npz       # NumPy arrays: vectors + chunk IDs
 
 tests/
 ├── test_flat_index.py         # 33 tests for FlatIndex
@@ -286,11 +288,35 @@ Settings loaded from `.env` via pydantic-settings (`app/config.py`):
 | `COHERE_EMBED_MODEL` | `embed-english-v3.0` | Embedding model |
 | `COHERE_BATCH_SIZE` | `96` | Max texts per API call |
 | `MAX_BATCH_SIZE` | `500` | Max chunks per batch request |
-| `DEBUG` | `false` | Enable debug mode |
+| `DEBUG` | `false` | Enable debug mode (sets log level to DEBUG) |
 | `DATA_DIR` | `data` | Directory for persisted data |
+
+## Logging
+
+Logging is configured in `app/logging_config.py` and uses Python's standard `logging` module.
+
+**Setup:** Each module uses `logger = logging.getLogger(__name__)` to get a logger that inherits from the `app` namespace.
+
+**Log level:** INFO by default, DEBUG when `DEBUG=true` in `.env`.
+
+**What's logged:**
+- Startup/shutdown and storage stats
+- Library, document, chunk create/delete operations (with names, not IDs)
+- Search queries with result counts
+- Embedding batch operations
+- Index loading and vector additions (DEBUG level)
+
+**Adding logging to new modules:**
+```python
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Then use:
+logger.info("Operation description")
+logger.debug("Detailed info for debugging")
+```
 
 ## Current Limitations / TODOs
 
-- **Delete from index:** Deleting a chunk doesn't remove it from the vector index
-- **Index persistence:** FlatIndex is rebuilt from embeddings on startup (not persisted separately)
-- **No index rebuild on startup:** Need to rebuild SearchService indexes from stored embeddings when server starts
+- **Delete from index:** Deleting a chunk doesn't remove it from the vector index (stale vectors may remain until restart)
