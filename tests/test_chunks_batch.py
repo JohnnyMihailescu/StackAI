@@ -1,17 +1,16 @@
 """Tests for batch chunks endpoint."""
 
 import asyncio
-import tempfile
-from pathlib import Path
+
 import pytest
-from unittest.mock import patch
 from fastapi.testclient import TestClient
+from unittest.mock import patch
+
 from app.main import app
-from app.services.search_service import SearchService
-from app.services.storage_service import StorageService
+from app.models.chunk import Chunk
 from app.models.document import Document
 from app.models.library import Library
-from app.models.chunk import Chunk
+from app.services.storage_service import StorageService
 
 
 # Mock embedding dimension (Cohere embed-english-v3.0 uses 1024)
@@ -30,11 +29,8 @@ class TestBatchChunksEndpoint:
     def setup(self):
         """Initialize and clear storage before each test."""
         asyncio.run(StorageService.initialize(persist=False))
-        # Use a temp directory for index files, but don't persist
-        SearchService.initialize(Path(tempfile.gettempdir()) / "test_indexes", persist=False)
         yield
         asyncio.run(StorageService.clear_all())
-        SearchService.clear_all()
 
     @pytest.fixture
     def client(self):

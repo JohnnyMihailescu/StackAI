@@ -1,66 +1,32 @@
-"""Search service for managing vector indexes and performing searches."""
+"""Search service for orchestrating similarity searches."""
 
 import logging
-from pathlib import Path
+
 import numpy as np
-from app.services.indexes import FlatIndex
+
+from app.models.enums import DistanceMetric, IndexType
+from app.models.search import SearchResult
+from app.services.storage_service import StorageService
 
 logger = logging.getLogger(__name__)
 
 
 class SearchService:
-    """Manages vector indexes and performs similarity searches.
+    """Orchestrates similarity searches across the storage layer.
 
-    Each library has its own FlatIndex instance for scoped similarity search.
-    Indexes are persisted to disk in the configured data directory.
+    This service provides a high-level API for search operations,
+    delegating index management to IndexStore (via StorageService)
+    and enriching results with Chunk objects from ChunkStore.
     """
 
-    _indexes: dict[str, FlatIndex] = {}
-    _data_dir: Path | None = None
-    _persist: bool = True
-
     @classmethod
-    def initialize(cls, data_dir: Path, persist: bool = True) -> None:
-        """Initialize the search service and load existing indexes.
-
-        Args:
-            data_dir: Directory where index files are stored
-            persist: Whether to persist indexes to disk (False for testing)
-        """
-        cls._data_dir = data_dir
-        cls._persist = persist
-        cls._indexes = {}
-
-        if persist:
-            data_dir.mkdir(parents=True, exist_ok=True)
-
-            # Load all existing index files
-            for index_file in data_dir.glob("*.npz"):
-                library_id = index_file.stem
-                cls._indexes[library_id] = FlatIndex.load(index_file)
-
-            logger.info(f"Loaded {len(cls._indexes)} search index(es) from disk")
-
-    @classmethod
-    def _get_index_path(cls, library_id: str) -> Path:
-        """Get the file path for a library's index."""
-        if cls._data_dir is None:
-            raise RuntimeError("SearchService not initialized. Call initialize() first.")
-        return cls._data_dir / f"{library_id}.npz"
-
-    @classmethod
-    def _get_index(cls, library_id: str) -> FlatIndex:
-        """Get or create the index for a library."""
-        if library_id not in cls._indexes:
-            cls._indexes[library_id] = FlatIndex()
-        return cls._indexes[library_id]
-
-    @classmethod
-    def add_vectors(
+    async def add_vectors(
         cls,
         library_id: str,
         vectors: np.ndarray,
         ids: list[str],
+        index_type: IndexType = IndexType.FLAT,
+        metric: DistanceMetric = DistanceMetric.COSINE,
     ) -> None:
         """Add vectors to a library's index.
 
@@ -68,42 +34,27 @@ class SearchService:
             library_id: The library to add vectors to
             vectors: Array of shape (n, dimensions)
             ids: List of chunk IDs corresponding to each vector
+            index_type: Type of index to create if it doesn't exist
+            metric: Distance metric to use if creating a new index
         """
-        index = cls._get_index(library_id)
-        index.add(vectors, ids)
-        logger.debug(f"Added {len(ids)} vectors to index (total: {index.num_vectors})")
-
-        if cls._persist:
-            index.save(cls._get_index_path(library_id))
+        await StorageService.indexes().add_vectors(
+            library_id, vectors, ids, index_type, metric
+        )
 
     @classmethod
-    def delete_vectors(cls, library_id: str, ids: list[str]) -> None:
+    async def delete_vectors(cls, library_id: str, ids: list[str]) -> None:
         """Delete vectors from a library's index.
 
         Args:
             library_id: The library to delete vectors from
             ids: List of chunk IDs to delete
         """
-        if library_id not in cls._indexes:
-            return
-
-        index = cls._indexes[library_id]
-        index.delete(ids)
-
-        if cls._persist:
-            if index.num_vectors == 0:
-                # Remove empty index file
-                index_path = cls._get_index_path(library_id)
-                if index_path.exists():
-                    index_path.unlink()
-                del cls._indexes[library_id]
-            else:
-                index.save(cls._get_index_path(library_id))
+        await StorageService.indexes().delete_vectors(library_id, ids)
 
     @classmethod
     async def search(
         cls, library_id: str, query_vector: np.ndarray, k: int
-    ) -> list["SearchResult"]:
+    ) -> list[SearchResult]:
         """Search for similar chunks in a library's index.
 
         Args:
@@ -114,11 +65,7 @@ class SearchService:
         Returns:
             List of SearchResult objects, sorted by similarity (highest first)
         """
-        from app.models.search import SearchResult
-        from app.services.storage_service import StorageService
-
-        index = cls._get_index(library_id)
-        raw_results = index.search(query_vector, k)
+        raw_results = await StorageService.indexes().search(library_id, query_vector, k)
 
         results = []
         for chunk_id, score in raw_results:
@@ -129,7 +76,7 @@ class SearchService:
         return results
 
     @classmethod
-    def get_embedding(cls, library_id: str, chunk_id: str) -> list[float] | None:
+    async def get_embedding(cls, library_id: str, chunk_id: str) -> list[float] | None:
         """Get the embedding for a chunk from the index.
 
         Args:
@@ -139,38 +86,17 @@ class SearchService:
         Returns:
             The embedding as a list of floats, or None if not found
         """
-        if library_id not in cls._indexes:
-            return None
-
-        vector = cls._indexes[library_id].get_vector(chunk_id)
+        vector = await StorageService.indexes().get_vector(library_id, chunk_id)
         if vector is None:
             return None
-
         return vector.tolist()
 
     @classmethod
-    def delete_index(cls, library_id: str) -> None:
-        """Delete the index for a library (both in memory and on disk)."""
-        if library_id in cls._indexes:
-            del cls._indexes[library_id]
-
-        if cls._persist:
-            index_path = cls._get_index_path(library_id)
-            if index_path.exists():
-                index_path.unlink()
+    async def delete_index(cls, library_id: str) -> None:
+        """Delete the index for a library."""
+        await StorageService.indexes().delete_index(library_id)
 
     @classmethod
-    def get_stats(cls, library_id: str) -> dict:
+    async def get_stats(cls, library_id: str) -> dict:
         """Get stats for a library's index."""
-        if library_id not in cls._indexes:
-            return {"index_type": "flat", "num_vectors": 0, "dimension": 0}
-        return cls._indexes[library_id].get_stats()
-
-    @classmethod
-    def clear_all(cls) -> None:
-        """Clear all indexes (memory and optionally disk). Useful for testing."""
-        cls._indexes.clear()
-
-        if cls._persist and cls._data_dir:
-            for index_file in cls._data_dir.glob("*.npz"):
-                index_file.unlink()
+        return await StorageService.indexes().get_stats(library_id)

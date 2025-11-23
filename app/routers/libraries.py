@@ -60,7 +60,7 @@ async def delete_library(library_id: str):
         await StorageService.documents().delete(doc.id)
 
     # Delete the vector index (removes index file from disk)
-    SearchService.delete_index(library_id)
+    await SearchService.delete_index(library_id)
 
     # Delete the library
     await StorageService.libraries().delete(library_id)

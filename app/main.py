@@ -2,13 +2,13 @@
 
 import logging
 from contextlib import asynccontextmanager
-from pathlib import Path
+
 from fastapi import FastAPI
+
 from app.config import settings
 from app.logging_config import setup_logging
-from app.routers import libraries, documents, chunks, search
+from app.routers import chunks, documents, libraries, search
 from app.services.embeddings import EmbeddingService
-from app.services.search_service import SearchService
 from app.services.storage_service import StorageService
 
 logger = logging.getLogger(__name__)
@@ -23,16 +23,14 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing embedding service")
     EmbeddingService.initialize()
 
-    logger.info("Loading storage from disk")
+    logger.info("Loading storage and indexes from disk")
     await StorageService.initialize()
     stats = StorageService.get_stats()
     logger.info(
         f"Storage loaded: {stats['libraries']} libraries, "
-        f"{stats['documents']} documents, {stats['chunks']} chunks"
+        f"{stats['documents']} documents, {stats['chunks']} chunks, "
+        f"{stats['indexes']} indexes"
     )
-
-    logger.info("Initializing search indexes")
-    SearchService.initialize(Path(settings.data_dir) / "indexes")
 
     logger.info("StackAI Vector DB Server ready")
     yield

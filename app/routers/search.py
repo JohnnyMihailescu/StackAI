@@ -46,7 +46,7 @@ async def search_library(
     # Optionally attach embeddings to result chunks
     if include_embedding:
         for result in results:
-            embedding = SearchService.get_embedding(library_id, result.chunk.id)
+            embedding = await SearchService.get_embedding(library_id, result.chunk.id)
             if embedding:
                 result.chunk.embedding = embedding
 

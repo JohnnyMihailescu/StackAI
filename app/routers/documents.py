@@ -105,7 +105,7 @@ async def delete_document(library_id: str, document_id: str):
 
     # Remove from vector index
     if chunk_ids:
-        SearchService.delete_vectors(library_id, chunk_ids)
+        await SearchService.delete_vectors(library_id, chunk_ids)
 
     await StorageService.documents().delete(document_id)
     logger.info(f"Document deleted: name='{document.name}' ({len(chunks)} chunks removed)")

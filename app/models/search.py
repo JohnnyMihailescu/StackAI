@@ -9,11 +9,11 @@ class SearchRequest(BaseModel):
     """Request model for similarity search."""
 
     query: str = Field(..., description="The search query text", min_length=1)
+    # 
     k: int = Field(
         default=settings.default_search_k,
         description="Number of results to return",
-        ge=1,
-        le=100,
+        ge=1
     )
 
     model_config = {

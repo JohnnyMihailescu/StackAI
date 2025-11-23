@@ -2,8 +2,12 @@
 
 from pathlib import Path
 from typing import List, Tuple
+
 import numpy as np
+
+from app.models.enums import DistanceMetric, IndexType
 from app.services.indexes.base import BaseIndex
+from app.services.indexes.utils import normalize_vectors, similarity_search
 
 
 class FlatIndex(BaseIndex):
@@ -13,9 +17,14 @@ class FlatIndex(BaseIndex):
     Suitable for small to medium datasets (<100k vectors).
     """
 
-    def __init__(self):
-        """Initialize the flat index."""
+    def __init__(self, metric: DistanceMetric = DistanceMetric.COSINE):
+        """Initialize the flat index.
+
+        Args:
+            metric: Distance metric to use for similarity search
+        """
         super().__init__()
+        self.metric = metric
         self.vectors: np.ndarray = np.array([])
         self.ids: List[str] = []
         self._id_to_idx: dict[str, int] = {}
@@ -28,9 +37,11 @@ class FlatIndex(BaseIndex):
         """
         np.savez(
             path,
+            index_type=np.array([IndexType.FLAT.value]),
             vectors=self.vectors,
             ids=np.array(self.ids, dtype=object),
             dimension=np.array([self.dimension]),
+            metric=np.array([self.metric.value]),
         )
 
     @classmethod
@@ -43,9 +54,10 @@ class FlatIndex(BaseIndex):
         Returns:
             A new FlatIndex instance with loaded data
         """
-        index = cls()
         data = np.load(path, allow_pickle=True)
 
+        metric = DistanceMetric(data["metric"][0])
+        index = cls(metric=metric)
         index.vectors = data["vectors"]
         index.ids = data["ids"].tolist()
         index.dimension = int(data["dimension"][0])
@@ -71,20 +83,23 @@ class FlatIndex(BaseIndex):
         if len(vectors) == 0:
             return
 
-        # Normalize vectors for cosine similarity
-        normalized_vectors = self._normalize_vectors(vectors)
+        # Normalize vectors for cosine similarity, keep original for euclidean
+        if self.metric == DistanceMetric.COSINE:
+            vectors_to_store = normalize_vectors(vectors)
+        else:
+            vectors_to_store = vectors
 
         # Initialize or validate dimension
         if self.num_vectors == 0:
-            self.dimension = normalized_vectors.shape[1]
-            self.vectors = normalized_vectors
+            self.dimension = vectors_to_store.shape[1]
+            self.vectors = vectors_to_store
         else:
-            if normalized_vectors.shape[1] != self.dimension:
+            if vectors_to_store.shape[1] != self.dimension:
                 raise ValueError(
-                    f"Vector dimension ({normalized_vectors.shape[1]}) "
+                    f"Vector dimension ({vectors_to_store.shape[1]}) "
                     f"does not match index dimension ({self.dimension})"
                 )
-            self.vectors = np.vstack([self.vectors, normalized_vectors])
+            self.vectors = np.vstack([self.vectors, vectors_to_store])
 
         # Update ID mappings
         start_idx = len(self.ids)
@@ -95,7 +110,7 @@ class FlatIndex(BaseIndex):
         self.num_vectors = len(self.ids)
 
     def search(self, query_vector: np.ndarray, k: int) -> List[Tuple[str, float]]:
-        """Search for k nearest neighbors using cosine similarity.
+        """Search for k nearest neighbors.
 
         Args:
             query_vector: Query vector of shape (d,)
@@ -105,7 +120,7 @@ class FlatIndex(BaseIndex):
             List of (id, similarity_score) tuples, sorted by similarity (highest first)
 
         Raises:
-            ValueError: If index is empty or dimension mismatch
+            ValueError: If dimension mismatch
         """
         if self.num_vectors == 0:
             return []
@@ -116,24 +131,7 @@ class FlatIndex(BaseIndex):
                 f"does not match index dimension ({self.dimension})"
             )
 
-        # Normalize query vector
-        normalized_query = self._normalize_vectors(query_vector.reshape(1, -1))[0]
-
-        # Compute cosine similarity (dot product of normalized vectors)
-        similarities = np.dot(self.vectors, normalized_query)
-
-        # Get top-k indices
-        k = min(k, self.num_vectors)
-        top_k_indices = np.argpartition(similarities, -k)[-k:]
-        top_k_indices = top_k_indices[np.argsort(-similarities[top_k_indices])]
-
-        # Return results as (id, score) tuples
-        results = [
-            (self.ids[idx], float(similarities[idx]))
-            for idx in top_k_indices
-        ]
-
-        return results
+        return similarity_search(query_vector, self.vectors, self.ids, k, self.metric)
 
     def delete(self, ids: List[str]) -> None:
         """Delete vectors from the index by their IDs.
@@ -193,20 +191,6 @@ class FlatIndex(BaseIndex):
             "index_type": "flat",
             "num_vectors": self.num_vectors,
             "dimension": self.dimension,
+            "metric": self.metric.value,
             "memory_bytes": self.vectors.nbytes if self.num_vectors > 0 else 0,
         }
-
-    @staticmethod
-    def _normalize_vectors(vectors: np.ndarray) -> np.ndarray:
-        """Normalize vectors to unit length for cosine similarity.
-
-        Args:
-            vectors: Array of shape (n, d)
-
-        Returns:
-            Normalized vectors of shape (n, d)
-        """
-        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-        # Avoid division by zero
-        norms = np.where(norms == 0, 1, norms)
-        return vectors / norms

@@ -29,6 +29,14 @@ async def create_chunk(document_id: str, chunk: Chunk):
             detail=f"Document with id '{document_id}' not found"
         )
 
+    # Get library for index settings
+    library = await StorageService.libraries().get(document.library_id)
+    if library is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Library with id '{document.library_id}' not found"
+        )
+
     # Verify chunk belongs to this document
     if chunk.document_id != document_id:
         raise HTTPException(
@@ -50,7 +58,10 @@ async def create_chunk(document_id: str, chunk: Chunk):
 
     # Add to vector index
     vectors = np.array([embedding])
-    SearchService.add_vectors(document.library_id, vectors, [chunk.id])
+    await SearchService.add_vectors(
+        library.id, vectors, [chunk.id],
+        index_type=library.index_type, metric=library.metric
+    )
 
     logger.info(f"Chunk created (document='{document.name}')")
     return created_chunk
@@ -76,6 +87,14 @@ async def create_chunks_batch(document_id: str, request: BatchChunksRequest):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Document with id '{document_id}' not found"
+        )
+
+    # Get library for index settings
+    library = await StorageService.libraries().get(document.library_id)
+    if library is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Library with id '{document.library_id}' not found"
         )
 
     # Validate all chunks belong to this document
@@ -119,7 +138,10 @@ async def create_chunks_batch(document_id: str, request: BatchChunksRequest):
     # Add all vectors to index
     vectors = np.array(embeddings)
     chunk_ids = [chunk.id for chunk in created_chunks]
-    SearchService.add_vectors(document.library_id, vectors, chunk_ids)
+    await SearchService.add_vectors(
+        library.id, vectors, chunk_ids,
+        index_type=library.index_type, metric=library.metric
+    )
 
     logger.info(f"Batch complete: {len(created_chunks)} chunks created (document='{document.name}')")
     return BatchChunksResponse(
@@ -142,7 +164,7 @@ async def list_chunks(document_id: str, include_embedding: bool = False):
 
     if include_embedding:
         for chunk in chunks:
-            embedding = SearchService.get_embedding(document.library_id, chunk.id)
+            embedding = await SearchService.get_embedding(document.library_id, chunk.id)
             if embedding:
                 chunk.embedding = embedding
 
@@ -163,7 +185,7 @@ async def get_chunk(chunk_id: str, include_embedding: bool = False):
         # Get library_id via document
         document = await StorageService.documents().get(chunk.document_id)
         if document:
-            embedding = SearchService.get_embedding(document.library_id, chunk_id)
+            embedding = await SearchService.get_embedding(document.library_id, chunk_id)
             if embedding:
                 chunk.embedding = embedding
 
@@ -192,6 +214,6 @@ async def delete_chunk(chunk_id: str):
 
     # Remove from vector index
     if library_id:
-        SearchService.delete_vectors(library_id, [chunk_id])
+        await SearchService.delete_vectors(library_id, [chunk_id])
 
     logger.info("Chunk deleted")
