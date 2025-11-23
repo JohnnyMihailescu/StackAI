@@ -38,6 +38,37 @@ make test   # or: pytest tests/ -v
 
 **API Documentation:** http://localhost:8000/docs (Swagger) or http://localhost:8000/redoc
 
+## Docker Setup
+
+```bash
+# Build and run
+docker compose up --build
+
+# Run in background
+docker compose up -d --build
+
+# Seed test data (after container is running)
+docker compose exec api python scripts/seed_data.py --library all
+
+# View logs
+docker compose logs -f
+
+# Stop
+docker compose down
+
+# Stop and delete data volume
+docker compose down -v
+```
+
+**Docker files:**
+- `Dockerfile` - Multi-stage build with Python 3.12-slim and uv
+- `docker-compose.yml` - Local development setup with volume persistence
+- `.dockerignore` - Excludes `.venv`, tests, notebooks, `data/`, etc.
+
+**Data persistence:** Uses a named Docker volume (`stackai-data`). Data survives container restarts but is deleted with `docker compose down -v`.
+
+**Environment variables:** Pass `COHERE_API_KEY` via environment or `.env` file (not copied into image).
+
 ## Project Structure
 
 ```
@@ -77,6 +108,10 @@ data/                          # Persisted data (gitignored)
 tests/
 ├── test_flat_index.py         # 33 tests for FlatIndex
 └── test_chunks_batch.py       # 13 tests for batch endpoint
+
+Dockerfile                     # Container build definition
+docker-compose.yml             # Local development orchestration
+.dockerignore                  # Files excluded from Docker build
 ```
 
 ## Domain Model
