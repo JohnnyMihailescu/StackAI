@@ -146,10 +146,21 @@ async def get_chunk(chunk_id: str):
 @router.delete("/chunks/{chunk_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_chunk(chunk_id: str):
     """Delete a chunk."""
-    deleted = await StorageService.chunks().delete(chunk_id)
-    if not deleted:
+    # Get chunk to find its document_id
+    chunk = await StorageService.chunks().get(chunk_id)
+    if chunk is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Chunk with id '{chunk_id}' not found"
         )
-    # TODO: Remove from vector index
+
+    # Get document to find library_id
+    document = await StorageService.documents().get(chunk.document_id)
+    library_id = document.library_id if document else None
+
+    # Delete from storage
+    await StorageService.chunks().delete(chunk_id)
+
+    # Remove from vector index
+    if library_id:
+        SearchService.delete_vectors(library_id, [chunk_id])

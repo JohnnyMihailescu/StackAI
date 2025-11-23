@@ -1,6 +1,7 @@
 """Base class for vector indexes."""
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import List, Tuple
 import numpy as np
 
@@ -12,6 +13,28 @@ class BaseIndex(ABC):
         """Initialize the index."""
         self.dimension: int = 0
         self.num_vectors: int = 0
+
+    @abstractmethod
+    def save(self, path: Path) -> None:
+        """Save the index to disk.
+
+        Args:
+            path: File path to save the index to
+        """
+        pass
+
+    @classmethod
+    @abstractmethod
+    def load(cls, path: Path) -> "BaseIndex":
+        """Load an index from disk.
+
+        Args:
+            path: File path to load the index from
+
+        Returns:
+            A new index instance with loaded data
+        """
+        pass
 
     @abstractmethod
     def add(self, vectors: np.ndarray, ids: List[str]) -> None:

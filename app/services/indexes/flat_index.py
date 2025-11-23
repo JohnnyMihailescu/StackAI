@@ -1,5 +1,6 @@
 """Flat (brute force) vector index implementation."""
 
+from pathlib import Path
 from typing import List, Tuple
 import numpy as np
 from app.services.indexes.base import BaseIndex
@@ -18,6 +19,40 @@ class FlatIndex(BaseIndex):
         self.vectors: np.ndarray = np.array([])
         self.ids: List[str] = []
         self._id_to_idx: dict[str, int] = {}
+
+    def save(self, path: Path) -> None:
+        """Save the index to disk.
+
+        Args:
+            path: File path to save the index to (will use .npz format)
+        """
+        np.savez(
+            path,
+            vectors=self.vectors,
+            ids=np.array(self.ids, dtype=object),
+            dimension=np.array([self.dimension]),
+        )
+
+    @classmethod
+    def load(cls, path: Path) -> "FlatIndex":
+        """Load an index from disk.
+
+        Args:
+            path: File path to load the index from
+
+        Returns:
+            A new FlatIndex instance with loaded data
+        """
+        index = cls()
+        data = np.load(path, allow_pickle=True)
+
+        index.vectors = data["vectors"]
+        index.ids = data["ids"].tolist()
+        index.dimension = int(data["dimension"][0])
+        index.num_vectors = len(index.ids)
+        index._id_to_idx = {id_: i for i, id_ in enumerate(index.ids)}
+
+        return index
 
     def add(self, vectors: np.ndarray, ids: List[str]) -> None:
         """Add vectors to the index.

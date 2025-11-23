@@ -1,5 +1,7 @@
 """Tests for FlatIndex implementation."""
 
+import tempfile
+from pathlib import Path
 import pytest
 import numpy as np
 from app.services.indexes.flat_index import FlatIndex
@@ -214,3 +216,52 @@ class TestFlatIndex:
         query = np.array([1.0, 0.0])
         results = empty_index.search(query, k=3)
         assert len(results) == 3
+
+    def test_save_and_load(self, populated_index):
+        """Test saving and loading index from disk."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test_index.npz"
+
+            # Save the index
+            populated_index.save(path)
+            assert path.exists()
+
+            # Load into a new index
+            loaded_index = FlatIndex.load(path)
+
+            # Verify loaded index matches original
+            assert loaded_index.num_vectors == populated_index.num_vectors
+            assert loaded_index.dimension == populated_index.dimension
+            assert loaded_index.ids == populated_index.ids
+            np.testing.assert_array_almost_equal(
+                loaded_index.vectors, populated_index.vectors
+            )
+
+    def test_save_and_load_empty_index(self, empty_index):
+        """Test saving and loading an empty index."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "empty_index.npz"
+
+            empty_index.save(path)
+            loaded_index = FlatIndex.load(path)
+
+            assert loaded_index.num_vectors == 0
+            assert loaded_index.dimension == 0
+            assert loaded_index.ids == []
+
+    def test_load_preserves_search(self, populated_index):
+        """Test that loaded index can still search correctly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "test_index.npz"
+            populated_index.save(path)
+            loaded_index = FlatIndex.load(path)
+
+            # Search should work the same
+            query = np.array([1.0, 0.0, 0.0])
+            original_results = populated_index.search(query, k=3)
+            loaded_results = loaded_index.search(query, k=3)
+
+            assert len(original_results) == len(loaded_results)
+            for orig, loaded in zip(original_results, loaded_results):
+                assert orig[0] == loaded[0]  # Same IDs
+                assert orig[1] == pytest.approx(loaded[1], abs=1e-6)  # Same scores

@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter, HTTPException, status
 from app.models.document import Document
+from app.services.search_service import SearchService
 from app.services.storage_service import StorageService
 
 router = APIRouter()
@@ -87,6 +88,15 @@ async def delete_document(library_id: str, document_id: str):
             detail=f"Document '{document_id}' not found in library '{library_id}'"
         )
 
-    # Delete associated chunks first
+    # Get chunk IDs before deleting (needed to remove from index)
+    chunks = await StorageService.chunks().list_by_document(document_id)
+    chunk_ids = [c.id for c in chunks]
+
+    # Delete chunks from storage
     await StorageService.chunks().delete_by_document(document_id)
+
+    # Remove from vector index
+    if chunk_ids:
+        SearchService.delete_vectors(library_id, chunk_ids)
+
     await StorageService.documents().delete(document_id)
