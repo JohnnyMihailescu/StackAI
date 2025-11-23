@@ -69,6 +69,18 @@ class BaseIndex(ABC):
         pass
 
     @abstractmethod
+    def get_vector(self, vector_id: str) -> np.ndarray | None:
+        """Get a vector by its ID.
+
+        Args:
+            vector_id: The ID of the vector to retrieve
+
+        Returns:
+            The vector as a numpy array, or None if not found
+        """
+        pass
+
+    @abstractmethod
     def get_stats(self) -> dict:
         """Get statistics about the index.
 

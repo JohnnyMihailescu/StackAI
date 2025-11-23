@@ -17,7 +17,11 @@ router = APIRouter()
     "/libraries/{library_id}/search",
     response_model=SearchResponse,
 )
-async def search_library(library_id: str, request: SearchRequest):
+async def search_library(
+    library_id: str,
+    request: SearchRequest,
+    include_embedding: bool = False,
+):
     """Search for similar chunks in a library.
 
     Embeds the query text and finds the most similar chunks using cosine similarity.
@@ -38,6 +42,13 @@ async def search_library(library_id: str, request: SearchRequest):
 
     # Search and get enriched results
     results = await SearchService.search(library_id, query_vector, request.k)
+
+    # Optionally attach embeddings to result chunks
+    if include_embedding:
+        for result in results:
+            embedding = SearchService.get_embedding(library_id, result.chunk.id)
+            if embedding:
+                result.chunk.embedding = embedding
 
     logger.info(f"Search complete: {len(results)} results (library='{library.name}')")
     return SearchResponse(

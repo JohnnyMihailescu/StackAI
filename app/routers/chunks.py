@@ -129,19 +129,28 @@ async def create_chunks_batch(document_id: str, request: BatchChunksRequest):
 
 
 @router.get("/documents/{document_id}/chunks", response_model=list[Chunk])
-async def list_chunks(document_id: str):
+async def list_chunks(document_id: str, include_embedding: bool = False):
     """List all chunks in a document."""
-    if not await StorageService.documents().exists(document_id):
+    document = await StorageService.documents().get(document_id)
+    if document is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Document with id '{document_id}' not found"
         )
 
-    return await StorageService.chunks().list_by_document(document_id)
+    chunks = await StorageService.chunks().list_by_document(document_id)
+
+    if include_embedding:
+        for chunk in chunks:
+            embedding = SearchService.get_embedding(document.library_id, chunk.id)
+            if embedding:
+                chunk.embedding = embedding
+
+    return chunks
 
 
 @router.get("/chunks/{chunk_id}", response_model=Chunk)
-async def get_chunk(chunk_id: str):
+async def get_chunk(chunk_id: str, include_embedding: bool = False):
     """Get a specific chunk by ID."""
     chunk = await StorageService.chunks().get(chunk_id)
     if chunk is None:
@@ -149,6 +158,15 @@ async def get_chunk(chunk_id: str):
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Chunk with id '{chunk_id}' not found"
         )
+
+    if include_embedding:
+        # Get library_id via document
+        document = await StorageService.documents().get(chunk.document_id)
+        if document:
+            embedding = SearchService.get_embedding(document.library_id, chunk_id)
+            if embedding:
+                chunk.embedding = embedding
+
     return chunk
 
 

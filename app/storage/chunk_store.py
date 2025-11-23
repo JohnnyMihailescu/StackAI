@@ -26,7 +26,7 @@ class ChunkStore(BaseStore[Chunk]):
         return item.id
 
     def _save(self) -> None:
-        data = {id_: chunk.model_dump(mode="json") for id_, chunk in self._data.items()}
+        data = {id_: chunk.for_storage() for id_, chunk in self._data.items()}
         atomic_write_json(self._data_path, data)
 
     async def load(self) -> None:
@@ -35,15 +35,13 @@ class ChunkStore(BaseStore[Chunk]):
             self._data = {cid: Chunk(**data) for cid, data in raw_data.items()}
 
     async def create(self, chunk: Chunk) -> Chunk:
-        """Create a new chunk (without embedding - that's handled by SearchService)."""
+        """Create a new chunk (embedding handled separately by SearchService)."""
         async with self._lock.write():
             if chunk.id in self._data:
                 raise ValueError(f"Chunk with id '{chunk.id}' already exists")
 
-            # Store chunk without embedding
-            chunk_for_storage = chunk.model_copy()
-            chunk_for_storage.embedding = None
-            self._data[chunk.id] = chunk_for_storage
+            # Store chunk (embedding excluded via for_storage() in _save)
+            self._data[chunk.id] = chunk.model_copy()
 
             if self._persist:
                 self._save()
@@ -58,9 +56,7 @@ class ChunkStore(BaseStore[Chunk]):
                 raise ValueError(f"Chunks with these IDs already exist: {existing}")
 
             for chunk in chunks:
-                chunk_for_storage = chunk.model_copy()
-                chunk_for_storage.embedding = None
-                self._data[chunk.id] = chunk_for_storage
+                self._data[chunk.id] = chunk.model_copy()
 
             if self._persist:
                 self._save()

@@ -11,9 +11,16 @@ class Chunk(BaseModel):
     id: str = Field(..., description="Unique identifier for the chunk")
     document_id: str = Field(..., description="ID of the document this chunk belongs to")
     text: str = Field(..., description="The text content of the chunk")
-    embedding: Optional[list[float]] = Field(None, description="Vector embedding of the text")
+    embedding: Optional[list[float]] = Field(
+        None,
+        description="Vector embedding (only returned when include_embedding=true)"
+    )
     metadata: dict = Field(default_factory=dict, description="Additional metadata (e.g., position, page number)")
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+    def for_storage(self) -> dict:
+        """Serialize for storage, excluding embedding (stored in index files)."""
+        return self.model_dump(mode="json", exclude={"embedding"})
 
     model_config = {
         "json_schema_extra": {

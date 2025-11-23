@@ -129,6 +129,26 @@ class SearchService:
         return results
 
     @classmethod
+    def get_embedding(cls, library_id: str, chunk_id: str) -> list[float] | None:
+        """Get the embedding for a chunk from the index.
+
+        Args:
+            library_id: The library containing the chunk
+            chunk_id: The chunk ID to get the embedding for
+
+        Returns:
+            The embedding as a list of floats, or None if not found
+        """
+        if library_id not in cls._indexes:
+            return None
+
+        vector = cls._indexes[library_id].get_vector(chunk_id)
+        if vector is None:
+            return None
+
+        return vector.tolist()
+
+    @classmethod
     def delete_index(cls, library_id: str) -> None:
         """Delete the index for a library (both in memory and on disk)."""
         if library_id in cls._indexes:

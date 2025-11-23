@@ -103,7 +103,7 @@ app/
 data/                          # Persisted data (gitignored)
 ├── libraries.json             # Library metadata (JSON dict keyed by ID)
 ├── documents.json             # Document metadata (JSON dict keyed by ID)
-├── chunks.json                # Chunk metadata + embeddings (JSON dict keyed by ID)
+├── chunks.json                # Chunk metadata only (no embeddings)
 └── indexes/                   # Vector indexes, one .npz file per library
     └── {library_id}.npz       # NumPy arrays: vectors + chunk IDs
 
@@ -177,6 +177,10 @@ All indexes implement the `BaseIndex` interface:
 | | GET | `/documents/{document_id}/chunks` | List chunks in document |
 | | GET | `/chunks/{chunk_id}` | Get chunk by ID |
 | | DELETE | `/chunks/{chunk_id}` | Delete chunk |
+| Search | POST | `/libraries/{library_id}/search` | Similarity search |
+
+**Query Parameters:**
+- `include_embedding=true` - Include embedding vectors in chunk responses (GET chunks, search results). Embeddings are excluded by default to reduce response size.
 
 **Health:** `GET /` and `GET /health`
 

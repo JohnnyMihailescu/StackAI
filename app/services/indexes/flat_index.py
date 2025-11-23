@@ -169,6 +169,20 @@ class FlatIndex(BaseIndex):
             self.vectors = np.array([])
             self.dimension = 0
 
+    def get_vector(self, vector_id: str) -> np.ndarray | None:
+        """Get a vector by its ID.
+
+        Args:
+            vector_id: The ID of the vector to retrieve
+
+        Returns:
+            The vector as a numpy array, or None if not found
+        """
+        if vector_id not in self._id_to_idx:
+            return None
+        idx = self._id_to_idx[vector_id]
+        return self.vectors[idx]
+
     def get_stats(self) -> dict:
         """Get statistics about the index.
 
