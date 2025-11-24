@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.enums import DistanceMetric, IndexType
 
@@ -22,13 +22,14 @@ class Library(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "id": "lib_123",
                 "name": "My Research Papers",
                 "description": "Collection of AI research papers",
                 "created_at": "2025-01-15T10:00:00Z",
-                "updated_at": "2025-01-15T10:00:00Z"
+                "updated_at": "2025-01-15T10:00:00Z",
             }
         }
+    )

@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     # Search defaults
     default_search_k: int = 10  # Default number of search results
 
+    # IVF Index defaults
+    ivf_default_clusters: int = 100  # Number of clusters for IVF index
+    ivf_default_n_probe: int = 10  # Number of clusters to search
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

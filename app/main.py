@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
     logger.info(
         f"Storage loaded: {stats['libraries']} libraries, "
         f"{stats['documents']} documents, {stats['chunks']} chunks, "
-        f"{stats['indexes']} indexes"
+        f"{stats['flat_indexes']} flat indexes, {stats['ivf_indexes']} IVF indexes"
     )
 
     logger.info("StackAI Vector DB Server ready")

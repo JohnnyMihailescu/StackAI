@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Document(BaseModel):
@@ -16,8 +16,8 @@ class Document(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "id": "doc_456",
                 "library_id": "lib_123",
@@ -25,6 +25,7 @@ class Document(BaseModel):
                 "source": "https://arxiv.org/abs/1706.03762",
                 "metadata": {"year": 2017, "authors": ["Vaswani et al."]},
                 "created_at": "2025-01-15T10:00:00Z",
-                "updated_at": "2025-01-15T10:00:00Z"
+                "updated_at": "2025-01-15T10:00:00Z",
             }
         }
+    )
