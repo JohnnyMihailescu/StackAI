@@ -381,13 +381,153 @@ DATA_DIR=data
 
 See full API documentation at http://localhost:8000/docs
 
-## Contributing
+## Current Limitations and Future Improvements
 
-This is a learning project! Feel free to:
-- Experiment with different indexing strategies
-- Add new distance metrics
-- Implement additional features
-- Optimize performance
+Here are some of the things I would immediately address with this system given more time to make it more suitable for production:
+
+
+
+### Performance and Scalability
+
+**Memory Management:**
+- **Issue:** All chunk text and metadata loaded into memory at startup
+- **Impact:** Memory usage scales linearly with number of chunks (not suitable for millions of chunks)
+- **Next Steps:**
+  - Implement lazy loading for chunk text (keep only IDs/embeddings in memory)
+  - Add LRU cache for recently accessed chunks
+  - Offload some non vector metadata storage to something like DynamoDB or RDS
+
+**Index Caching:**
+- **Issue:** Indexes loaded from disk on every search operation
+- **Impact:** High disk I/O, slower search performance
+- **Next Steps:**
+  - Implement LRU cache for frequently-accessed indexes
+  - Add memory budget configuration (e.g., cache up to 1GB of indexes)
+
+**Concurrency:**
+- **Current:** AsyncRWLock allows multiple readers or single writer
+- **Limitation:** Writers block all readers (even for unrelated libraries)
+- **Next Steps:**
+  - Implement per-library locking (library 1 writes don't block library 2 reads)
+  - Consider lock-free data structures for read-heavy paths
+  - Add connection pooling for embedding API calls
+
+### Indexing and Search
+
+**HNSW Index (High Priority):**
+- **Current:** Only Flat (O(n)) and IVF (O(n_probe × n/n_clusters)) indexes
+- **Next Steps:**
+  - Implement HNSW (Hierarchical Navigable Small World) index
+  - O(log n) search complexity with better recall than IVF
+  - Better performance/accuracy tradeoff for large datasets (>1M vectors)
+  - More widely used in production vector databases
+
+**Metadata Filtering:**
+- **Issue:** No filtering on chunk/document metadata during search
+- **Impact:** Can't filter results by date, author, category, etc.
+- **Next Steps:**
+  - Add pre-filtering (filter before vector search)
+  - Add post-filtering (filter after vector search)
+  - Support complex queries: `search("AI", where={"year": 2024, "category": "papers"})`
+
+**Hybrid Search:**
+- **Next Steps:**
+  - Combine keyword search (BM25) with vector search
+  - Support weighted combinations (70% vector + 30% keyword)
+  - Add sparse vector support for better keyword matching
+
+### Distributed Systems and Cloud
+
+**Single Node Limitation:**
+- **Current:** Runs on single server, no horizontal scaling
+- **Next Steps:**
+  - Kubernetes deployment with multiple replicas
+  - Read replicas for search (write to primary, read from replicas)
+  - Shard data across nodes (library-based sharding)
+
+**Cloud Native Features:**
+- **Next Steps:**
+  - Object storage backend (S3, GCS, Azure Blob) instead of local files
+  - Separate compute and storage layers
+  - Auto-scaling based on load
+  - Health checks and readiness probes for Kubernetes
+
+**Durable Execution:**
+- **Issue:** No transaction log or write-ahead log (WAL)
+- **Impact:** Risk of data loss if crash occurs during write
+- **Next Steps:**
+  - Implement WAL for crash recovery
+  - Add RAFT consensus for distributed consistency
+  - Support point-in-time recovery
+
+### Features and Usability
+
+**Advanced Filtering:**
+- **Next Steps:**
+  - Filter libraries/documents/chunks by name (partial match, regex)
+  - Advanced metadata queries (range, contains, array operations)
+  - Full-text search on chunk text
+
+**Batch Operations:**
+- **Current:** Batch chunk creation only
+- **Next Steps:**
+  - Batch document creation
+  - Batch update operations
+  - Bulk delete with filters
+
+**Embedding Flexibility:**
+- **Current:** Only Cohere API supported
+- **Next Steps:**
+  - Support OpenAI, Voyage AI, local models (sentence-transformers)
+  - Allow custom embedding dimensions
+  - Store embedding model info with library
+
+**API Enhancements:**
+- **Next Steps:**
+  - Streaming responses for large result sets
+  - Cursor-based pagination (more efficient than offset/limit)
+  - GraphQL API for flexible queries
+  - WebSocket support for real-time updates
+
+### Operations and Monitoring
+
+**Observability:**
+- **Next Steps:**
+  - Prometheus metrics (request rates, latencies, index sizes)
+  - OpenTelemetry tracing for request flows
+  - Structured logging with correlation IDs
+  - Performance dashboards (Grafana)
+
+**Authentication:**
+- **Issue:** No authentication - anyone can access and modify all data
+- **Impact:** Not suitable for production without access control
+- **Next Steps:**
+  - Add authentication (JWT tokens would be a good first step)
+  - Implement authorization for per-library access control
+
+**Data Management:**
+- **Next Steps:**
+  - Backup and restore utilities
+  - Data migration tools (upgrade indexes without downtime)
+  - CLI tool for administration (`stackai-cli backup`, `stackai-cli restore`)
+  - Index rebuild command (re-create corrupted indexes)
+
+### Testing and Quality
+
+**Test Coverage:**
+- **Current:** ~2000 tests, but missing unit tests for some components
+- **Next Steps:**
+  - Unit tests for all utility functions
+  - Property-based testing (Hypothesis) for index implementations
+  - Chaos engineering tests (simulate node failures, network partitions)
+  - Performance regression tests (prevent slowdowns)
+
+**Benchmarking:**
+- **Next Steps:**
+  - Standardized benchmark suite (compare Flat, IVF, HNSW)
+  - Memory profiling and optimization
+  - Comparison benchmarks vs FAISS, Pinecone, Weaviate
+  - Dataset-specific benchmarks (small, medium, large)
 
 ## Developer Documentation
 
