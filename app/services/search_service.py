@@ -22,11 +22,65 @@ class SearchService:
 
     @classmethod
     async def _get_library_index_type(cls, library_id: str) -> IndexType:
-        """Get the index type for a library."""
+        """
+        Get the index type for a library.
+        """
         library = await StorageService.libraries().get(library_id)
-        if library is None:
-            return IndexType.FLAT
         return library.index_type
+
+    @classmethod
+    async def _get_index(
+        cls, library_id: str
+    ) -> FlatIndex | IVFIndex | None:
+        """Get the index for a library, or None if it doesn't exist.
+
+        Args:
+            library_id: The library ID
+
+        Returns:
+            The loaded index, or None if no index exists
+        """
+        index_type = await cls._get_library_index_type(library_id)
+
+        if index_type == IndexType.FLAT:
+            store = StorageService.flat_index_store()
+            if not store.exists(library_id):
+                return None
+            return FlatIndex(library_id=library_id, store=store)
+        else:
+            store = StorageService.ivf_index_store()
+            if not store.exists(library_id):
+                return None
+            return IVFIndex.load_from_store(store, library_id)
+
+    @classmethod
+    async def _get_or_create_index(
+        cls,
+        library_id: str,
+        index_type: IndexType,
+        metric: DistanceMetric,
+    ) -> FlatIndex | IVFIndex:
+        """Get or create an index for a library.
+
+        Args:
+            library_id: The library ID
+            index_type: Type of index to create if it doesn't exist
+            metric: Distance metric to use if creating a new index
+
+        Returns:
+            The loaded or newly created index
+        """
+        if index_type == IndexType.FLAT:
+            store = StorageService.flat_index_store()
+            return FlatIndex(library_id=library_id, store=store, metric=metric)
+        else:
+            store = StorageService.ivf_index_store()
+            if store.exists(library_id):
+                return IVFIndex.load_from_store(store, library_id)
+            else:
+                index = IVFIndex(library_id=library_id, metric=metric)
+                index._store = store
+                return index
 
     @classmethod
     async def add_vectors(
@@ -46,19 +100,12 @@ class SearchService:
             index_type: Type of index to create if it doesn't exist
             metric: Distance metric to use if creating a new index
         """
-        if index_type == IndexType.FLAT:
-            store = StorageService.flat_index_store()
-            index = FlatIndex(library_id=library_id, store=store, metric=metric)
-            index.add(vectors, ids)
-        else:
-            store = StorageService.ivf_index_store()
-            if store.exists(library_id):
-                index = IVFIndex.load_from_store(store, library_id)
-            else:
-                index = IVFIndex(library_id=library_id, metric=metric)
-                index._store = store
-            index.add(vectors, ids)
-            index.save_to_store(store)
+        index = await cls._get_or_create_index(library_id, index_type, metric)
+        index.add(vectors, ids)
+
+        # IVF requires explicit save
+        if isinstance(index, IVFIndex):
+            index.save_to_store(StorageService.ivf_index_store())
 
     @classmethod
     async def delete_vectors(cls, library_id: str, ids: list[str]) -> None:
@@ -68,22 +115,18 @@ class SearchService:
             library_id: The library to delete vectors from
             ids: List of chunk IDs to delete
         """
-        index_type = await cls._get_library_index_type(library_id)
+        index = await cls._get_index(library_id)
+        if index is None:
+            return
 
-        if index_type == IndexType.FLAT:
-            store = StorageService.flat_index_store()
-            if store.exists(library_id):
-                index = FlatIndex(library_id=library_id, store=store)
-                index.delete(ids)
-        else:
-            store = StorageService.ivf_index_store()
-            if store.exists(library_id):
-                index = IVFIndex.load_from_store(store, library_id)
-                index.delete(ids)
-                if index.num_vectors > 0:
-                    index.save_to_store(store)
-                else:
-                    store.delete_index(library_id)
+        index.delete(ids)
+
+        # IVF requires explicit save or cleanup if empty
+        if isinstance(index, IVFIndex):
+            if index.num_vectors > 0:
+                index.save_to_store(StorageService.ivf_index_store())
+            else:
+                StorageService.ivf_index_store().delete_index(library_id)
 
     @classmethod
     async def search(
@@ -99,20 +142,11 @@ class SearchService:
         Returns:
             List of SearchResult objects, sorted by similarity (highest first)
         """
-        index_type = await cls._get_library_index_type(library_id)
+        index = await cls._get_index(library_id)
+        if index is None:
+            return []
 
-        if index_type == IndexType.FLAT:
-            store = StorageService.flat_index_store()
-            if not store.exists(library_id):
-                return []
-            index = FlatIndex(library_id=library_id, store=store)
-            raw_results = index.search(query_vector, k)
-        else:
-            store = StorageService.ivf_index_store()
-            if not store.exists(library_id):
-                return []
-            index = IVFIndex.load_from_store(store, library_id)
-            raw_results = index.search(query_vector, k)
+        raw_results = index.search(query_vector, k)
 
         results = []
         for chunk_id, score in raw_results:
@@ -133,21 +167,11 @@ class SearchService:
         Returns:
             The embedding as a list of floats, or None if not found
         """
-        index_type = await cls._get_library_index_type(library_id)
+        index = await cls._get_index(library_id)
+        if index is None:
+            return None
 
-        if index_type == IndexType.FLAT:
-            store = StorageService.flat_index_store()
-            if not store.exists(library_id):
-                return None
-            index = FlatIndex(library_id=library_id, store=store)
-            vector = index.get_vector(chunk_id)
-        else:
-            store = StorageService.ivf_index_store()
-            if not store.exists(library_id):
-                return None
-            index = IVFIndex.load_from_store(store, library_id)
-            vector = index.get_vector(chunk_id)
-
+        vector = index.get_vector(chunk_id)
         if vector is None:
             return None
         return vector.tolist()
@@ -162,17 +186,11 @@ class SearchService:
     @classmethod
     async def get_stats(cls, library_id: str) -> dict:
         """Get stats for a library's index."""
-        index_type = await cls._get_library_index_type(library_id)
+        index = await cls._get_index(library_id)
+        if index is None:
+            # Return empty stats with correct index type
+            index_type = await cls._get_library_index_type(library_id)
+            type_name = "flat" if index_type == IndexType.FLAT else "ivf"
+            return {"index_type": type_name, "num_vectors": 0, "dimension": 0}
 
-        if index_type == IndexType.FLAT:
-            store = StorageService.flat_index_store()
-            if not store.exists(library_id):
-                return {"index_type": "flat", "num_vectors": 0, "dimension": 0}
-            index = FlatIndex(library_id=library_id, store=store)
-            return index.get_stats()
-        else:
-            store = StorageService.ivf_index_store()
-            if not store.exists(library_id):
-                return {"index_type": "ivf", "num_vectors": 0, "dimension": 0}
-            index = IVFIndex.load_from_store(store, library_id)
-            return index.get_stats()
+        return index.get_stats()
