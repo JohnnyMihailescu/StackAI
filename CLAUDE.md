@@ -210,7 +210,23 @@ Routers → StorageService → Individual Stores (with RWLock) → Persistence
 
 - **StorageService** (`app/services/storage_service.py`): Singleton providing access to all stores
 - **Stores** (`app/storage/`): Each entity type has its own store with RWLock protection
-- **Persistence**: JSON for metadata, NumPy `.npz` for embeddings
+- **Persistence**: JSON for metadata, NumPy `.npy` for embeddings
+
+### Memory Model
+
+**Metadata (libraries, documents, chunks):**
+- Loaded entirely into memory at startup from JSON files
+- All CRUD operations work on in-memory dicts (`self._data`)
+- Changes are persisted to disk on each write operation
+- **Implication:** Memory usage scales with number of entities and chunk text size
+
+**Embeddings (vectors):**
+- **Lazy loaded** from `.npy` files on each operation (search, add, delete)
+- NOT cached in memory between operations
+- Each search loads vectors fresh from disk
+- **Implication:** Low memory usage for embeddings, but disk I/O on every search
+
+This design prioritizes memory efficiency for embeddings (which are large: 1024 floats × 4 bytes = 4KB per chunk) over query latency. For high-throughput production use, consider adding an LRU cache for frequently-accessed indexes.
 
 ### Async Requirements
 
@@ -323,4 +339,5 @@ logger.debug("Detailed info for debugging")
 
 ## Current Limitations / TODOs
 
-- **Delete from index:** Deleting a chunk doesn't remove it from the vector index (stale vectors may remain until restart)
+- **In-memory metadata:** All chunk text and metadata is loaded into memory at startup. Not suitable for millions of chunks without a proper database.
+- **No index caching:** Embeddings are loaded from disk on every search. For high-throughput use cases, consider adding an LRU cache for indexes.
