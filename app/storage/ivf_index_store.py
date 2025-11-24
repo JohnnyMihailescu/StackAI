@@ -27,15 +27,13 @@ class IVFIndexStore:
         └── ...
     """
 
-    def __init__(self, data_dir: Path | None = None, persist: bool = True):
+    def __init__(self, data_dir: Path | None = None):
         """Initialize the IVF index store.
 
         Args:
             data_dir: Directory for index files
-            persist: Whether to persist indexes to disk
         """
         self._data_dir = data_dir
-        self._persist = persist
 
     def _get_index_dir(self, library_id: int) -> Path:
         """Get the directory path for a library's index."""
@@ -45,7 +43,7 @@ class IVFIndexStore:
 
     def list_libraries(self) -> List[int]:
         """List library IDs that have IVF indexes on disk."""
-        if not self._persist or self._data_dir is None:
+        if self._data_dir is None:
             return []
 
         if not self._data_dir.exists():
@@ -119,9 +117,6 @@ class IVFIndexStore:
         metric: DistanceMetric,
     ) -> None:
         """Save metadata for an IVF index."""
-        if not self._persist:
-            return
-
         index_dir = self._get_index_dir(library_id)
         index_dir.mkdir(parents=True, exist_ok=True)
 
@@ -143,9 +138,6 @@ class IVFIndexStore:
 
     def save_cluster(self, library_id: int, cluster_idx: int, vectors: np.ndarray) -> None:
         """Save a single cluster's vectors to disk."""
-        if not self._persist:
-            return
-
         if len(vectors) == 0:
             return
 
@@ -155,9 +147,6 @@ class IVFIndexStore:
 
     def delete_index(self, library_id: int) -> None:
         """Delete all files for an index."""
-        if not self._persist:
-            return
-
         index_dir = self._get_index_dir(library_id)
         if index_dir.exists():
             for file in index_dir.iterdir():
@@ -166,7 +155,7 @@ class IVFIndexStore:
 
     def exists(self, library_id: int) -> bool:
         """Check if an index exists on disk."""
-        if not self._persist or self._data_dir is None:
+        if self._data_dir is None:
             return False
 
         index_dir = self._get_index_dir(library_id)

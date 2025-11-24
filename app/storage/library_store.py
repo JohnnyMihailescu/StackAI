@@ -16,8 +16,8 @@ class LibraryStore(BaseStore[Library]):
     - Globally unique names (for name-based lookups)
     """
 
-    def __init__(self, data_dir: Path, persist: bool = True) -> None:
-        super().__init__(persist=persist)
+    def __init__(self, data_dir: Path) -> None:
+        super().__init__()
         self._data_path = data_dir / "libraries.json"
         self._name_index: dict[str, int] = {}  # name -> id
 
@@ -56,10 +56,7 @@ class LibraryStore(BaseStore[Library]):
 
             self._data[new_id] = library
             self._name_index[library.name] = new_id
-
-            if self._persist:
-                self._save()
-
+            self._save()
             return library
 
     async def delete(self, item_id: int) -> bool:
@@ -70,8 +67,7 @@ class LibraryStore(BaseStore[Library]):
             library = self._data[item_id]
             del self._name_index[library.name]
             del self._data[item_id]
-            if self._persist:
-                self._save()
+            self._save()
             return True
 
     async def clear(self) -> None:

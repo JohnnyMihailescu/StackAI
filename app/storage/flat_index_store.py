@@ -23,15 +23,13 @@ class FlatIndexStore:
         └── vectors.npy      # All vectors (n × d)
     """
 
-    def __init__(self, data_dir: Path | None = None, persist: bool = True):
+    def __init__(self, data_dir: Path | None = None):
         """Initialize the Flat index store.
 
         Args:
             data_dir: Directory for index files
-            persist: Whether to persist indexes to disk
         """
         self._data_dir = data_dir
-        self._persist = persist
 
     def _get_index_dir(self, library_id: int) -> Path:
         """Get the directory path for a library's index."""
@@ -41,7 +39,7 @@ class FlatIndexStore:
 
     def list_libraries(self) -> List[int]:
         """List library IDs that have Flat indexes on disk."""
-        if not self._persist or self._data_dir is None:
+        if self._data_dir is None:
             return []
 
         if not self._data_dir.exists():
@@ -103,9 +101,6 @@ class FlatIndexStore:
         metric: DistanceMetric,
     ) -> None:
         """Save a Flat index to disk."""
-        if not self._persist:
-            return
-
         index_dir = self._get_index_dir(library_id)
         index_dir.mkdir(parents=True, exist_ok=True)
 
@@ -126,9 +121,6 @@ class FlatIndexStore:
 
     def delete_index(self, library_id: int) -> None:
         """Delete all files for an index."""
-        if not self._persist:
-            return
-
         index_dir = self._get_index_dir(library_id)
         if index_dir.exists():
             for file in index_dir.iterdir():
@@ -137,7 +129,7 @@ class FlatIndexStore:
 
     def exists(self, library_id: int) -> bool:
         """Check if an index exists on disk."""
-        if not self._persist or self._data_dir is None:
+        if self._data_dir is None:
             return False
 
         index_dir = self._get_index_dir(library_id)

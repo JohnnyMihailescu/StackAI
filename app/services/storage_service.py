@@ -26,18 +26,18 @@ class StorageService:
     _ivf_index_store: IVFIndexStore | None = None
 
     @classmethod
-    async def initialize(cls, persist: bool = True, data_dir: str | None = None) -> None:
+    async def initialize(cls, data_dir: str | None = None) -> None:
         """Initialize all stores and load data from disk."""
         path = Path(data_dir or settings.data_dir)
         path.mkdir(parents=True, exist_ok=True)
 
-        cls._libraries = LibraryStore(path, persist=persist)
-        cls._documents = DocumentStore(path, persist=persist)
-        cls._chunks = ChunkStore(path, persist=persist)
+        cls._libraries = LibraryStore(path)
+        cls._documents = DocumentStore(path)
+        cls._chunks = ChunkStore(path)
 
         index_path = path / "indexes"
-        cls._flat_index_store = FlatIndexStore(data_dir=index_path, persist=persist)
-        cls._ivf_index_store = IVFIndexStore(data_dir=index_path, persist=persist)
+        cls._flat_index_store = FlatIndexStore(data_dir=index_path)
+        cls._ivf_index_store = IVFIndexStore(data_dir=index_path)
 
         await cls._libraries.load()
         await cls._documents.load()

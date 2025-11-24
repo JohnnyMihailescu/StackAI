@@ -26,9 +26,10 @@ class TestBatchChunksEndpoint:
     """Test suite for POST /documents/{document_id}/chunks/batch."""
 
     @pytest.fixture(autouse=True)
-    def setup(self):
+    def setup(self, tmp_path):
         """Initialize and clear storage before each test."""
-        asyncio.run(StorageService.initialize(persist=False))
+        data_dir = str(tmp_path / "test_data")
+        asyncio.run(StorageService.initialize(data_dir=data_dir))
         yield
         asyncio.run(StorageService.clear_all())
 

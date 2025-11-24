@@ -16,8 +16,8 @@ class DocumentStore(BaseStore[Document]):
     - Names unique within their parent library
     """
 
-    def __init__(self, data_dir: Path, persist: bool = True) -> None:
-        super().__init__(persist=persist)
+    def __init__(self, data_dir: Path) -> None:
+        super().__init__()
         self._data_path = data_dir / "documents.json"
         # Scoped name index: (library_id, name) -> doc_id
         self._name_index: dict[tuple[int, str], int] = {}
@@ -61,10 +61,7 @@ class DocumentStore(BaseStore[Document]):
 
             self._data[new_id] = document
             self._name_index[(library_id, document.name)] = new_id
-
-            if self._persist:
-                self._save()
-
+            self._save()
             return document
 
     async def list_by_library(self, library_id: int) -> list[Document]:
@@ -86,8 +83,7 @@ class DocumentStore(BaseStore[Document]):
             document = self._data[item_id]
             del self._name_index[(document.library_id, document.name)]
             del self._data[item_id]
-            if self._persist:
-                self._save()
+            self._save()
             return True
 
     async def clear(self) -> None:

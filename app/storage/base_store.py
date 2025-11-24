@@ -27,11 +27,10 @@ class BaseStore(ABC, Generic[ModelT]):
     - load: Load data from storage
     """
 
-    def __init__(self, persist: bool = True) -> None:
+    def __init__(self) -> None:
         self._data: dict[int, ModelT] = {}
         self._next_id: int = 1
         self._lock = AsyncRWLock()
-        self._persist = persist
 
     @abstractmethod
     def _get_id(self, item: ModelT) -> int:
@@ -70,8 +69,7 @@ class BaseStore(ABC, Generic[ModelT]):
             if item_id not in self._data:
                 return False
             del self._data[item_id]
-            if self._persist:
-                self._save()
+            self._save()
             return True
 
     async def exists(self, item_id: int) -> bool:

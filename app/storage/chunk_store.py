@@ -22,8 +22,8 @@ class ChunkStore(BaseStore[Chunk]):
     and persisted in the index files.
     """
 
-    def __init__(self, data_dir: Path, persist: bool = True) -> None:
-        super().__init__(persist=persist)
+    def __init__(self, data_dir: Path) -> None:
+        super().__init__()
         self._data_path = data_dir / "chunks.json"
 
     def _get_id(self, item: Chunk) -> int:
@@ -55,10 +55,7 @@ class ChunkStore(BaseStore[Chunk]):
             )
 
             self._data[new_id] = chunk
-
-            if self._persist:
-                self._save()
-
+            self._save()
             return chunk.model_copy()
 
     async def create_batch(self, document_id: int, chunk_creates: list[ChunkCreate]) -> list[Chunk]:
@@ -76,9 +73,7 @@ class ChunkStore(BaseStore[Chunk]):
                 self._data[new_id] = chunk
                 chunks.append(chunk)
 
-            if self._persist:
-                self._save()
-
+            self._save()
             return [c.model_copy() for c in chunks]
 
     async def get(self, chunk_id: int) -> Optional[Chunk]:
@@ -109,8 +104,7 @@ class ChunkStore(BaseStore[Chunk]):
             if chunk_id not in self._data:
                 return False
             del self._data[chunk_id]
-            if self._persist:
-                self._save()
+            self._save()
             return True
 
     async def delete_by_document(self, document_id: int) -> list[int]:
@@ -119,7 +113,7 @@ class ChunkStore(BaseStore[Chunk]):
             to_delete = [cid for cid, c in self._data.items() if c.document_id == document_id]
             for chunk_id in to_delete:
                 del self._data[chunk_id]
-            if self._persist and to_delete:
+            if to_delete:
                 self._save()
             return to_delete
 
