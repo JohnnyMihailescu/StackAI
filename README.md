@@ -16,7 +16,7 @@ StackAI is a FastAPI-based vector database that demonstrates core concepts of si
 
 **Data Model:**
 ```
-Library → Document → Chunk (with embedding vector)
+Library -> Document -> Chunk (with embedding vector)
 ```
 
 Each library contains documents, each document contains text chunks, and each chunk automatically gets a 1024-dimensional embedding vector for similarity search.
@@ -319,18 +319,18 @@ python scripts/cleanup_loadtest.py  # If this script exists
 ## Project Structure
 
 ```
-app/                    # FastAPI application
-   main.py            # Application entry point
-   routers/           # API endpoints
-   services/          # Business logic (embeddings, search, indexes)
-   storage/           # Data persistence with RWLock
-   models/            # Pydantic models
+app/
+├── main.py              # Application entry point
+├── routers/             # API endpoints
+├── services/            # Business logic (embeddings, search, indexes)
+├── storage/             # Data persistence with RWLock
+└── models/              # Pydantic models
 
-loadtests/             # Locust load tests
-notebooks/             # Jupyter notebooks for exploration
-scripts/               # Utility scripts (seed data, etc.)
-tests/                 # Pytest test suite
-data/                  # Persisted data (gitignored)
+loadtests/               # Locust load tests
+notebooks/               # Jupyter notebooks for exploration
+scripts/                 # Utility scripts (seed data, etc.)
+tests/                   # Pytest test suite
+data/                    # Persisted data (gitignored)
 ```
 
 ## Index Types
