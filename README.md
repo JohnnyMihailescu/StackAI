@@ -187,13 +187,24 @@ pytest tests/ -v --cov=app
 ```
 
 **Test Coverage:**
+
+*Unit Tests (test individual components in isolation):*
 - `test_flat_index.py` - Flat index implementation (319 tests)
 - `test_ivf_index.py` - IVF index implementation (445 tests)
-- `test_search.py` - Search functionality (293 tests)
-- `test_persistence.py` - Data persistence (248 tests)
-- `test_libraries.py` - Library endpoints (192 tests)
-- `test_documents.py` - Document endpoints (321 tests)
+
+*Integration Tests (test full request-to-response flows):*
+- `test_libraries.py` - Library CRUD endpoints (192 tests)
+- `test_documents.py` - Document CRUD endpoints (321 tests)
 - `test_chunks_batch.py` - Batch chunk operations (176 tests)
+- `test_search.py` - End-to-end search functionality (293 tests)
+- `test_persistence.py` - Data persistence across operations (248 tests)
+
+The integration tests use FastAPI's `TestClient` to send actual HTTP requests through the full stack: API endpoints → routers → services (embeddings, search) → storage (with RWLock) → file I/O. They verify that all components work together correctly, including:
+- Request validation and response serialization
+- Storage concurrency with Reader-Writer locks
+- Embedding generation via Cohere API (mocked in tests)
+- Index updates and persistence to disk
+- Error handling and edge cases across the entire system
 
 ## Load Testing with Locust
 
@@ -333,7 +344,7 @@ data/                  # Persisted data (gitignored)
 **IVF Index:**
 - Inverted File index with k-means clustering
 - Approximate nearest neighbor search
-- O(n_probe � n/n_clusters) complexity
+- O(n_probe * n/n_clusters) complexity
 - Configurable speed/accuracy tradeoff
 - Best for: >100k vectors, when speed matters
 
@@ -382,6 +393,4 @@ This is a learning project! Feel free to:
 
 For detailed technical documentation, architecture decisions, and developer guidelines, see [CLAUDE.md](CLAUDE.md).
 
-## License
-
-[Your License Here]
+The CLAUDE.md file was intended to make development on this repo more streamlined when using an AI Assistant.
