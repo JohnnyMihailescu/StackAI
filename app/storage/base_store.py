@@ -19,6 +19,7 @@ class BaseStore(ABC, Generic[ModelT]):
     Provides:
     - RWLock protection (multiple readers OR single writer)
     - Common CRUD operations
+    - Auto-incrementing integer IDs
 
     Subclasses must implement:
     - _get_id: Extract ID from model instance
@@ -27,12 +28,13 @@ class BaseStore(ABC, Generic[ModelT]):
     """
 
     def __init__(self, persist: bool = True) -> None:
-        self._data: dict[str, ModelT] = {}
+        self._data: dict[int, ModelT] = {}
+        self._next_id: int = 1
         self._lock = AsyncRWLock()
         self._persist = persist
 
     @abstractmethod
-    def _get_id(self, item: ModelT) -> str:
+    def _get_id(self, item: ModelT) -> int:
         """Get the ID from an item."""
         pass
 
@@ -46,18 +48,13 @@ class BaseStore(ABC, Generic[ModelT]):
         """Load data from storage into self._data."""
         pass
 
-    async def create(self, item: ModelT) -> ModelT:
-        """Create a new item. Raises ValueError if ID already exists."""
-        item_id = self._get_id(item)
-        async with self._lock.write():
-            if item_id in self._data:
-                raise ValueError(f"Item with id '{item_id}' already exists")
-            self._data[item_id] = item
-            if self._persist:
-                self._save()
-            return item
+    def _allocate_id(self) -> int:
+        """Allocate and return the next available ID."""
+        new_id = self._next_id
+        self._next_id += 1
+        return new_id
 
-    async def get(self, item_id: str) -> Optional[ModelT]:
+    async def get(self, item_id: int) -> Optional[ModelT]:
         """Get an item by ID. Returns None if not found."""
         async with self._lock.read():
             return self._data.get(item_id)
@@ -67,7 +64,7 @@ class BaseStore(ABC, Generic[ModelT]):
         async with self._lock.read():
             return list(self._data.values())
 
-    async def delete(self, item_id: str) -> bool:
+    async def delete(self, item_id: int) -> bool:
         """Delete an item. Returns True if deleted, False if not found."""
         async with self._lock.write():
             if item_id not in self._data:
@@ -77,7 +74,7 @@ class BaseStore(ABC, Generic[ModelT]):
                 self._save()
             return True
 
-    async def exists(self, item_id: str) -> bool:
+    async def exists(self, item_id: int) -> bool:
         """Check if an item exists."""
         async with self._lock.read():
             return item_id in self._data
@@ -86,3 +83,4 @@ class BaseStore(ABC, Generic[ModelT]):
         """Clear all data."""
         async with self._lock.write():
             self._data.clear()
+            self._next_id = 1

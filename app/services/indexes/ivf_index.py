@@ -23,7 +23,7 @@ class IVFIndex(BaseIndex):
 
     def __init__(
         self,
-        library_id: str,
+        library_id: int,
         n_clusters: int | None = None,
         n_probe: int | None = None,
         metric: DistanceMetric = DistanceMetric.COSINE,
@@ -48,20 +48,20 @@ class IVFIndex(BaseIndex):
 
         # Per-cluster vector storage (None = not loaded yet, for lazy loading)
         self.cluster_vectors: List[np.ndarray | None] = []
-        self.cluster_ids: List[List[str]] = []
+        self.cluster_ids: List[List[int]] = []
 
         # ID lookup: id -> (cluster_idx, position_in_cluster)
-        self._id_to_location: dict[str, Tuple[int, int]] = {}
+        self._id_to_location: dict[int, Tuple[int, int]] = {}
 
         # Store reference for on-demand cluster loading
         self._store: IVFIndexStore | None = None
 
-    def add(self, vectors: np.ndarray, ids: List[str]) -> None:
+    def add(self, vectors: np.ndarray, ids: List[int]) -> None:
         """Add vectors to the index.
 
         Args:
             vectors: Array of shape (n, d)
-            ids: List of string IDs corresponding to each vector
+            ids: List of integer IDs corresponding to each vector
         """
         if len(vectors) != len(ids):
             raise ValueError(
@@ -89,7 +89,7 @@ class IVFIndex(BaseIndex):
             self._store_vector(cluster_idx, vector, id_)
             self.num_vectors += 1
 
-    def _store_vector(self, cluster_idx: int, vector: np.ndarray, id_: str) -> None:
+    def _store_vector(self, cluster_idx: int, vector: np.ndarray, id_: int) -> None:
         """Store a vector in the specified cluster."""
         # Expand cluster storage if needed (during bootstrap)
         while len(self.cluster_vectors) <= cluster_idx:
@@ -108,7 +108,7 @@ class IVFIndex(BaseIndex):
         self.cluster_ids[cluster_idx].append(id_)
         self._id_to_location[id_] = (cluster_idx, pos)
 
-    def search(self, query_vector: np.ndarray, k: int) -> List[Tuple[str, float]]:
+    def search(self, query_vector: np.ndarray, k: int) -> List[Tuple[int, float]]:
         """Search for k nearest neighbors.
 
         Args:
@@ -166,7 +166,7 @@ class IVFIndex(BaseIndex):
         self.cluster_vectors[cluster_idx] = vectors
         return vectors
 
-    def delete(self, ids: List[str]) -> None:
+    def delete(self, ids: List[int]) -> None:
         """Delete vectors by ID. Does not update centroids."""
         if not ids:
             return
@@ -214,7 +214,7 @@ class IVFIndex(BaseIndex):
         self._id_to_location = {}
         self.dimension = 0
 
-    def get_vector(self, vector_id: str) -> np.ndarray | None:
+    def get_vector(self, vector_id: int) -> np.ndarray | None:
         """Get a vector by ID."""
         if vector_id not in self._id_to_location:
             return None
@@ -276,7 +276,7 @@ class IVFIndex(BaseIndex):
                 store.save_cluster(self.library_id, i, vectors)
 
     @classmethod
-    def load_from_store(cls, store: IVFIndexStore, library_id: str) -> "IVFIndex":
+    def load_from_store(cls, store: IVFIndexStore, library_id: int) -> "IVFIndex":
         """Load index from store (metadata only, vectors loaded on-demand).
 
         Args:

@@ -33,13 +33,13 @@ class FlatIndexStore:
         self._data_dir = data_dir
         self._persist = persist
 
-    def _get_index_dir(self, library_id: str) -> Path:
+    def _get_index_dir(self, library_id: int) -> Path:
         """Get the directory path for a library's index."""
         if self._data_dir is None:
             raise RuntimeError("FlatIndexStore not initialized with data_dir")
-        return self._data_dir / library_id
+        return self._data_dir / str(library_id)
 
-    def list_libraries(self) -> List[str]:
+    def list_libraries(self) -> List[int]:
         """List library IDs that have Flat indexes on disk."""
         if not self._persist or self._data_dir is None:
             return []
@@ -56,11 +56,11 @@ class FlatIndexStore:
                 with open(meta_file) as f:
                     meta = json.load(f)
                 if meta.get("index_type") == IndexType.FLAT.value:
-                    library_ids.append(index_dir.name)
+                    library_ids.append(int(index_dir.name))
 
         return library_ids
 
-    def load_metadata(self, library_id: str) -> dict:
+    def load_metadata(self, library_id: int) -> dict:
         """Load metadata for a Flat index.
 
         Returns raw data dict - caller is responsible for creating FlatIndex.
@@ -77,7 +77,7 @@ class FlatIndexStore:
             "metric": DistanceMetric(meta["metric"]),
         }
 
-    def load_vectors(self, library_id: str) -> np.ndarray:
+    def load_vectors(self, library_id: int) -> np.ndarray:
         """Load all vectors for a Flat index.
 
         Args:
@@ -96,9 +96,9 @@ class FlatIndexStore:
 
     def save(
         self,
-        library_id: str,
+        library_id: int,
         vectors: np.ndarray,
-        ids: List[str],
+        ids: List[int],
         dimension: int,
         metric: DistanceMetric,
     ) -> None:
@@ -124,7 +124,7 @@ class FlatIndexStore:
         if len(vectors) > 0:
             np.save(index_dir / "vectors.npy", vectors)
 
-    def delete_index(self, library_id: str) -> None:
+    def delete_index(self, library_id: int) -> None:
         """Delete all files for an index."""
         if not self._persist:
             return
@@ -135,7 +135,7 @@ class FlatIndexStore:
                 file.unlink()
             index_dir.rmdir()
 
-    def exists(self, library_id: str) -> bool:
+    def exists(self, library_id: int) -> bool:
         """Check if an index exists on disk."""
         if not self._persist or self._data_dir is None:
             return False

@@ -5,11 +5,27 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
+class ChunkCreate(BaseModel):
+    """Input model for creating a chunk."""
+
+    text: str = Field(..., description="The text content of the chunk")
+    metadata: dict = Field(default_factory=dict, description="Additional metadata (e.g., position, page number)")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "text": "The Transformer model architecture is based on self-attention mechanisms...",
+                "metadata": {"position": 0, "page": 1},
+            }
+        }
+    }
+
+
 class Chunk(BaseModel):
     """A chunk is a piece of text with embeddings and metadata."""
 
-    id: str = Field(..., description="Unique identifier for the chunk")
-    document_id: str = Field(..., description="ID of the document this chunk belongs to")
+    id: int = Field(..., description="Unique identifier for the chunk")
+    document_id: int = Field(..., description="ID of the document this chunk belongs to")
     text: str = Field(..., description="The text content of the chunk")
     embedding: Optional[list[float]] = Field(
         None,
@@ -25,8 +41,8 @@ class Chunk(BaseModel):
     model_config = {
         "json_schema_extra": {
             "example": {
-                "id": "chunk_789",
-                "document_id": "doc_456",
+                "id": 1,
+                "document_id": 1,
                 "text": "The Transformer model architecture is based on self-attention mechanisms...",
                 "embedding": [0.1, 0.2, 0.3],
                 "metadata": {"position": 0, "page": 1},
@@ -39,7 +55,7 @@ class Chunk(BaseModel):
 class BatchChunksRequest(BaseModel):
     """Request model for creating multiple chunks at once."""
 
-    chunks: list[Chunk] = Field(..., description="List of chunks to create", min_length=1)
+    chunks: list[ChunkCreate] = Field(..., description="List of chunks to create", min_length=1)
 
 
 class BatchChunksResponse(BaseModel):

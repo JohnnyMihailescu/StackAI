@@ -28,8 +28,8 @@ from loadtests.common import random_id, random_text, random_query
 class SharedState:
     """Shared state across all user types."""
 
-    library_ids: list[str] = []
-    document_ids: list[tuple[str, str]] = []  # (doc_id, library_id)
+    library_ids: list[int] = []
+    document_ids: list[tuple[int, int]] = []  # (doc_id, library_id)
     initialized: bool = False
 
 
@@ -113,23 +113,26 @@ class WriteUser(HttpUser):
 
     @task(2)
     def create_library(self):
-        """Create a new library."""
-        lib_id = random_id("loadtest_lib_")
+        """Create a new library with random index type (flat or ivf)."""
+        unique_name = f"Load Test Library {random_id()}"
+        index_type = random.choice(["flat", "ivf"])
         payload = {
-            "id": lib_id,
-            "name": f"Load Test Library {lib_id}",
+            "name": unique_name,
+            "index_type": index_type,
         }
 
         with self.client.post(
             "/api/v1/libraries",
             json=payload,
             catch_response=True,
+            name=f"/api/v1/libraries (index={index_type})",
         ) as response:
             if response.status_code == 201:
+                lib_id = response.json()["id"]
                 SharedState.library_ids.append(lib_id)
                 response.success()
             elif response.status_code == 409:
-                response.success()
+                response.success()  # Name conflict, not a failure
             else:
                 response.failure(f"Status {response.status_code}")
 
@@ -140,11 +143,9 @@ class WriteUser(HttpUser):
             return
 
         lib_id = random.choice(SharedState.library_ids)
-        doc_id = random_id("loadtest_doc_")
+        unique_name = f"Document {random_id()}"
         payload = {
-            "id": doc_id,
-            "library_id": lib_id,
-            "name": f"Document {doc_id}",
+            "name": unique_name,
         }
 
         with self.client.post(
@@ -153,10 +154,11 @@ class WriteUser(HttpUser):
             catch_response=True,
         ) as response:
             if response.status_code == 201:
+                doc_id = response.json()["id"]
                 SharedState.document_ids.append((doc_id, lib_id))
                 response.success()
             elif response.status_code in (404, 409):
-                response.success()
+                response.success()  # Library deleted or name conflict
             else:
                 response.failure(f"Status {response.status_code}")
 
@@ -167,10 +169,7 @@ class WriteUser(HttpUser):
             return
 
         doc_id, _ = random.choice(SharedState.document_ids)
-        chunk_id = random_id("loadtest_chunk_")
         payload = {
-            "id": chunk_id,
-            "document_id": doc_id,
             "text": random_text(),
         }
 
@@ -181,7 +180,7 @@ class WriteUser(HttpUser):
         ) as response:
             if response.status_code == 201:
                 response.success()
-            elif response.status_code in (404, 409):
-                response.success()
+            elif response.status_code == 404:
+                response.success()  # Document was deleted, not a failure
             else:
                 response.failure(f"Status {response.status_code}")

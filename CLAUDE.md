@@ -121,17 +121,23 @@ docker-compose.yml             # Local development orchestration
 The core data hierarchy is: **Library → Document → Chunk**
 
 **Library** - Collection of documents
-- `id`, `name`, `description` (optional)
+- `id` (int, server-generated), `name` (unique), `description` (optional)
 - `created_at`, `updated_at` timestamps
 
 **Document** - Belongs to a library
-- `id`, `library_id`, `name`, `source` (optional)
+- `id` (int, server-generated), `library_id`, `name` (unique within library), `source` (optional)
 - `metadata` dict for custom fields (year, authors, etc.)
 
 **Chunk** - Piece of text with embedding
-- `id`, `document_id`, `text`
+- `id` (int, server-generated), `document_id`, `text`
 - `embedding` (1024-dim float array, auto-generated via Cohere)
 - `metadata` dict for position, page, etc.
+
+**ID System:**
+- All IDs are **server-generated integers** (auto-increment)
+- Create requests only need data (name, text), not IDs
+- Lookups use integer IDs in URL paths: `/libraries/1`, `/documents/2`
+- Names are for display/uniqueness constraints, not lookups
 
 **Note:** Documents come pre-chunked. No automatic chunking logic.
 
@@ -235,13 +241,13 @@ All endpoint handlers and storage operations MUST be `async`:
 ```python
 # CORRECT - async endpoint using await
 @router.get("/libraries/{library_id}")
-async def get_library(library_id: str):
+async def get_library(library_id: int):
     library = await StorageService.libraries().get(library_id)
     ...
 
 # WRONG - sync endpoint (breaks concurrency)
 @router.get("/libraries/{library_id}")
-def get_library(library_id: str):
+def get_library(library_id: int):
     ...
 ```
 

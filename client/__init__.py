@@ -49,17 +49,28 @@ class StackAIClient:
     # -------------------------------------------------------------------------
 
     def create_library(
-        self, id: str, name: str, description: str | None = None
+        self,
+        name: str,
+        description: str | None = None,
+        index_type: str = "flat",
+        metric: str = "cosine",
     ) -> dict[str, Any]:
-        """Create a new library."""
-        data = {"id": id, "name": name}
+        """Create a new library. Returns the created library with server-generated ID.
+
+        Args:
+            name: Library name (must be unique)
+            description: Optional description
+            index_type: Index type - "flat" (brute force, 100% recall) or "ivf" (faster, approximate)
+            metric: Distance metric - "cosine" or "euclidean"
+        """
+        data = {"name": name, "index_type": index_type, "metric": metric}
         if description:
             data["description"] = description
         response = self.client.post("/libraries", json=data)
         response.raise_for_status()
         return response.json()
 
-    def get_library(self, library_id: str) -> dict[str, Any]:
+    def get_library(self, library_id: int) -> dict[str, Any]:
         """Get a library by ID."""
         response = self.client.get(f"/libraries/{library_id}")
         response.raise_for_status()
@@ -71,7 +82,7 @@ class StackAIClient:
         response.raise_for_status()
         return response.json()
 
-    def delete_library(self, library_id: str) -> None:
+    def delete_library(self, library_id: int) -> None:
         """Delete a library and all its documents/chunks."""
         response = self.client.delete(f"/libraries/{library_id}")
         response.raise_for_status()
@@ -81,7 +92,7 @@ class StackAIClient:
         libraries = self.get_libraries()
         print(f"Libraries ({len(libraries)}):")
         for lib in libraries:
-            print(f"  - {lib['id']}: {lib['name']}")
+            print(f"  - [{lib['id']}] {lib['name']}")
 
     # -------------------------------------------------------------------------
     # Documents
@@ -89,14 +100,13 @@ class StackAIClient:
 
     def create_document(
         self,
-        library_id: str,
-        id: str,
+        library_id: int,
         name: str,
         source: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Create a new document in a library."""
-        data = {"id": id, "library_id": library_id, "name": name}
+        """Create a new document in a library. Returns the created document with server-generated ID."""
+        data = {"name": name}
         if source:
             data["source"] = source
         if metadata:
@@ -105,31 +115,31 @@ class StackAIClient:
         response.raise_for_status()
         return response.json()
 
-    def get_document(self, library_id: str, document_id: str) -> dict[str, Any]:
+    def get_document(self, library_id: int, document_id: int) -> dict[str, Any]:
         """Get a document by ID."""
         response = self.client.get(f"/libraries/{library_id}/documents/{document_id}")
         response.raise_for_status()
         return response.json()
 
-    def get_documents(self, library_id: str) -> list[dict[str, Any]]:
+    def get_documents(self, library_id: int) -> list[dict[str, Any]]:
         """List all documents in a library."""
         response = self.client.get(f"/libraries/{library_id}/documents")
         response.raise_for_status()
         return response.json()
 
-    def delete_document(self, library_id: str, document_id: str) -> None:
+    def delete_document(self, library_id: int, document_id: int) -> None:
         """Delete a document and all its chunks."""
         response = self.client.delete(
             f"/libraries/{library_id}/documents/{document_id}"
         )
         response.raise_for_status()
 
-    def print_documents(self, library_id: str):
+    def print_documents(self, library_id: int):
         """Print all documents in a library."""
         docs = self.get_documents(library_id)
-        print(f"Documents in {library_id} ({len(docs)}):")
+        print(f"Documents in library {library_id} ({len(docs)}):")
         for doc in docs:
-            print(f"  - {doc['id']}: {doc['name']}")
+            print(f"  - [{doc['id']}] {doc['name']}")
 
     # -------------------------------------------------------------------------
     # Chunks
@@ -137,13 +147,12 @@ class StackAIClient:
 
     def create_chunk(
         self,
-        document_id: str,
-        id: str,
+        document_id: int,
         text: str,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Create a single chunk (will auto-generate embedding)."""
-        data = {"id": id, "document_id": document_id, "text": text}
+        """Create a single chunk (will auto-generate embedding). Returns chunk with server-generated ID."""
+        data = {"text": text}
         if metadata:
             data["metadata"] = metadata
         response = self.client.post(f"/documents/{document_id}/chunks", json=data)
@@ -151,9 +160,13 @@ class StackAIClient:
         return response.json()
 
     def create_chunks_batch(
-        self, document_id: str, chunks: list[dict[str, Any]]
+        self, document_id: int, chunks: list[dict[str, Any]]
     ) -> dict[str, Any]:
-        """Create multiple chunks in a batch (up to 500)."""
+        """Create multiple chunks in a batch (up to 500).
+
+        Each chunk dict should have 'text' and optionally 'metadata'.
+        IDs are assigned by the server.
+        """
         response = self.client.post(
             f"/documents/{document_id}/chunks/batch", json={"chunks": chunks}
         )
@@ -161,7 +174,7 @@ class StackAIClient:
         return response.json()
 
     def get_chunk(
-        self, chunk_id: str, include_embedding: bool = False
+        self, chunk_id: int, include_embedding: bool = False
     ) -> dict[str, Any]:
         """Get a chunk by ID."""
         params = {"include_embedding": "true"} if include_embedding else {}
@@ -170,7 +183,7 @@ class StackAIClient:
         return response.json()
 
     def get_chunks(
-        self, document_id: str, include_embedding: bool = False
+        self, document_id: int, include_embedding: bool = False
     ) -> list[dict[str, Any]]:
         """List all chunks in a document."""
         params = {"include_embedding": "true"} if include_embedding else {}
@@ -178,13 +191,13 @@ class StackAIClient:
         response.raise_for_status()
         return response.json()
 
-    def delete_chunk(self, chunk_id: str) -> None:
+    def delete_chunk(self, chunk_id: int) -> None:
         """Delete a chunk."""
         response = self.client.delete(f"/chunks/{chunk_id}")
         response.raise_for_status()
 
     def print_chunks(
-        self, document_id: str, show_text: bool = True, max_length: int | None = None
+        self, document_id: int, show_text: bool = True, max_length: int | None = None
     ):
         """Print all chunks in a document.
 
@@ -194,7 +207,7 @@ class StackAIClient:
             max_length: Max characters to show per chunk. None = full text (default).
         """
         chunks = self.get_chunks(document_id)
-        print(f"Chunks in {document_id} ({len(chunks)}):")
+        print(f"Chunks in document {document_id} ({len(chunks)}):")
         for chunk in chunks:
             if show_text:
                 text = chunk["text"]
@@ -210,7 +223,7 @@ class StackAIClient:
 
     def search(
         self,
-        library_id: str,
+        library_id: int,
         query: str,
         k: int = 3,
         include_embedding: bool = False,
@@ -225,7 +238,7 @@ class StackAIClient:
         response.raise_for_status()
         return response.json()
 
-    def print_search(self, query: str, library_id: str = "recipes_lib", k: int = 3):
+    def print_search(self, query: str, library_id: int = 1, k: int = 3):
         """Search a library and display formatted results."""
         try:
             data = self.search(library_id, query, k)

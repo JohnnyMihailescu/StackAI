@@ -7,9 +7,9 @@ from fastapi.testclient import TestClient
 from unittest.mock import patch
 
 from app.main import app
-from app.models.chunk import Chunk
-from app.models.document import Document
-from app.models.library import Library
+from app.models.library import LibraryCreate
+from app.models.document import DocumentCreate
+from app.models.chunk import ChunkCreate
 from app.services.storage_service import StorageService
 
 
@@ -43,137 +43,93 @@ class TestBatchChunksEndpoint:
 
     @pytest.fixture
     def sample_document(self):
-        """Create a sample library and document in storage."""
-        lib = Library(id="lib_1", name="Test Library")
-        doc = Document(id="doc_123", library_id="lib_1", name="Test Doc")
-        asyncio.run(StorageService.libraries().create(lib))
-        asyncio.run(StorageService.documents().create(doc))
-        return doc
+        """Create a sample library and document in storage, return (library, document)."""
+        lib_create = LibraryCreate(name="Test Library")
+        doc_create = DocumentCreate(name="Test Doc")
+        lib = asyncio.run(StorageService.libraries().create(lib_create))
+        doc = asyncio.run(StorageService.documents().create(lib.id, doc_create))
+        return lib, doc
 
     def test_create_batch_success(self, client, sample_document):
         """Test successfully creating multiple chunks."""
+        lib, doc = sample_document
         payload = {
             "chunks": [
-                {"id": "chunk_1", "document_id": "doc_123", "text": "First chunk"},
-                {"id": "chunk_2", "document_id": "doc_123", "text": "Second chunk"},
-                {"id": "chunk_3", "document_id": "doc_123", "text": "Third chunk"},
+                {"text": "First chunk"},
+                {"text": "Second chunk"},
+                {"text": "Third chunk"},
             ]
         }
 
-        response = client.post("/api/v1/documents/doc_123/chunks/batch", json=payload)
+        response = client.post(f"/api/v1/documents/{doc.id}/chunks/batch", json=payload)
 
         assert response.status_code == 201
         data = response.json()
         assert data["created_count"] == 3
         assert len(data["chunks"]) == 3
-        assert all(c["id"] in ["chunk_1", "chunk_2", "chunk_3"] for c in data["chunks"])
+        # IDs should be auto-generated integers
+        assert all(isinstance(c["id"], int) for c in data["chunks"])
+        assert all(c["document_id"] == doc.id for c in data["chunks"])
 
     def test_create_batch_document_not_found(self, client):
         """Test batch creation fails when document doesn't exist."""
         payload = {
             "chunks": [
-                {"id": "chunk_1", "document_id": "nonexistent", "text": "Some text"},
+                {"text": "Some text"},
             ]
         }
 
-        response = client.post("/api/v1/documents/nonexistent/chunks/batch", json=payload)
+        response = client.post("/api/v1/documents/999/chunks/batch", json=payload)
 
         assert response.status_code == 404
         assert "not found" in response.json()["detail"]
 
-    def test_create_batch_wrong_document_id(self, client, sample_document):
-        """Test batch creation fails when chunk document_id doesn't match URL."""
-        payload = {
-            "chunks": [
-                {"id": "chunk_1", "document_id": "doc_123", "text": "Valid"},
-                {"id": "chunk_2", "document_id": "wrong_doc", "text": "Invalid"},
-            ]
-        }
-
-        response = client.post("/api/v1/documents/doc_123/chunks/batch", json=payload)
-
-        assert response.status_code == 400
-        assert "chunk_2" in response.json()["detail"]
-
-    def test_create_batch_duplicate_ids_in_batch(self, client, sample_document):
-        """Test batch creation fails when batch contains duplicate IDs."""
-        payload = {
-            "chunks": [
-                {"id": "chunk_1", "document_id": "doc_123", "text": "First"},
-                {"id": "chunk_1", "document_id": "doc_123", "text": "Duplicate"},
-            ]
-        }
-
-        response = client.post("/api/v1/documents/doc_123/chunks/batch", json=payload)
-
-        assert response.status_code == 400
-        assert "Duplicate" in response.json()["detail"]
-
-    def test_create_batch_existing_ids(self, client, sample_document):
-        """Test batch creation fails when IDs already exist in database."""
-        # Create an existing chunk
-        existing = Chunk(id="chunk_1", document_id="doc_123", text="Existing", embedding=[0.1] * MOCK_EMBEDDING_DIM)
-        asyncio.run(StorageService.chunks().create(existing))
-
-        payload = {
-            "chunks": [
-                {"id": "chunk_1", "document_id": "doc_123", "text": "Conflict"},
-                {"id": "chunk_2", "document_id": "doc_123", "text": "New"},
-            ]
-        }
-
-        response = client.post("/api/v1/documents/doc_123/chunks/batch", json=payload)
-
-        assert response.status_code == 409
-        assert "chunk_1" in response.json()["detail"]
-
     def test_create_batch_empty_list(self, client, sample_document):
         """Test batch creation fails with empty chunk list."""
+        lib, doc = sample_document
         payload = {"chunks": []}
 
-        response = client.post("/api/v1/documents/doc_123/chunks/batch", json=payload)
+        response = client.post(f"/api/v1/documents/{doc.id}/chunks/batch", json=payload)
 
         assert response.status_code == 422  # Pydantic validation error
 
     def test_create_batch_exceeds_limit(self, client, sample_document, monkeypatch):
         """Test batch creation fails when exceeding max batch size."""
+        lib, doc = sample_document
         # Set a low limit for testing
         from app import config
         monkeypatch.setattr(config.settings, "max_batch_size", 2)
 
         payload = {
             "chunks": [
-                {"id": "chunk_1", "document_id": "doc_123", "text": "First"},
-                {"id": "chunk_2", "document_id": "doc_123", "text": "Second"},
-                {"id": "chunk_3", "document_id": "doc_123", "text": "Third"},
+                {"text": "First"},
+                {"text": "Second"},
+                {"text": "Third"},
             ]
         }
 
-        response = client.post("/api/v1/documents/doc_123/chunks/batch", json=payload)
+        response = client.post(f"/api/v1/documents/{doc.id}/chunks/batch", json=payload)
 
         assert response.status_code == 400
         assert "exceeds maximum" in response.json()["detail"]
 
     def test_create_batch_with_metadata(self, client, sample_document):
         """Test batch creation preserves metadata."""
+        lib, doc = sample_document
         payload = {
             "chunks": [
                 {
-                    "id": "chunk_1",
-                    "document_id": "doc_123",
                     "text": "First chunk",
                     "metadata": {"position": 0, "page": 1}
                 },
                 {
-                    "id": "chunk_2",
-                    "document_id": "doc_123",
                     "text": "Second chunk",
                     "metadata": {"position": 1, "page": 1}
                 },
             ]
         }
 
-        response = client.post("/api/v1/documents/doc_123/chunks/batch", json=payload)
+        response = client.post(f"/api/v1/documents/{doc.id}/chunks/batch", json=payload)
 
         assert response.status_code == 201
         chunks = response.json()["chunks"]
@@ -182,14 +138,15 @@ class TestBatchChunksEndpoint:
 
     def test_create_batch_generates_embeddings(self, client, sample_document):
         """Test that embeddings are generated for all chunks."""
+        lib, doc = sample_document
         payload = {
             "chunks": [
-                {"id": "chunk_1", "document_id": "doc_123", "text": "First chunk"},
-                {"id": "chunk_2", "document_id": "doc_123", "text": "Second chunk"},
+                {"text": "First chunk"},
+                {"text": "Second chunk"},
             ]
         }
 
-        response = client.post("/api/v1/documents/doc_123/chunks/batch", json=payload)
+        response = client.post(f"/api/v1/documents/{doc.id}/chunks/batch", json=payload)
 
         assert response.status_code == 201
         chunks = response.json()["chunks"]
@@ -197,3 +154,22 @@ class TestBatchChunksEndpoint:
         for chunk in chunks:
             assert chunk["embedding"] is not None
             assert len(chunk["embedding"]) == MOCK_EMBEDDING_DIM
+
+    def test_create_batch_sequential_ids(self, client, sample_document):
+        """Test that chunk IDs are assigned sequentially."""
+        lib, doc = sample_document
+        payload = {
+            "chunks": [
+                {"text": "First chunk"},
+                {"text": "Second chunk"},
+            ]
+        }
+
+        response = client.post(f"/api/v1/documents/{doc.id}/chunks/batch", json=payload)
+
+        assert response.status_code == 201
+        chunks = response.json()["chunks"]
+        ids = [c["id"] for c in chunks]
+        # IDs should be sequential
+        assert ids == sorted(ids)
+        assert ids[1] == ids[0] + 1

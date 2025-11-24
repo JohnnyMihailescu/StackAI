@@ -24,30 +24,33 @@ class WriteUser(HttpUser):
 
     wait_time = between(0.5, 2)
 
-    # Shared state - IDs created during the test
-    library_ids: list[str] = []
-    document_ids: list[tuple[str, str]] = []  # (doc_id, library_id)
+    # Shared state - IDs created during the test (server-generated)
+    library_ids: list[int] = []
+    document_ids: list[tuple[int, int]] = []  # (doc_id, library_id)
 
     @task(3)
     def create_library(self):
-        """Create a new library."""
-        lib_id = random_id("loadtest_lib_")
+        """Create a new library with random index type (flat or ivf)."""
+        unique_name = f"Load Test Library {random_id()}"
+        index_type = random.choice(["flat", "ivf"])
         payload = {
-            "id": lib_id,
-            "name": f"Load Test Library {lib_id}",
+            "name": unique_name,
             "description": "Created by Locust write test",
+            "index_type": index_type,
         }
 
         with self.client.post(
             "/api/v1/libraries",
             json=payload,
             catch_response=True,
+            name=f"/api/v1/libraries (index={index_type})",
         ) as response:
             if response.status_code == 201:
+                lib_id = response.json()["id"]
                 WriteUser.library_ids.append(lib_id)
                 response.success()
             elif response.status_code == 409:
-                response.success()  # Already exists, not a failure
+                response.success()  # Name conflict, not a failure
             else:
                 response.failure(f"Status {response.status_code}")
 
@@ -58,11 +61,9 @@ class WriteUser(HttpUser):
             return
 
         lib_id = random.choice(WriteUser.library_ids)
-        doc_id = random_id("loadtest_doc_")
+        unique_name = f"Load Test Document {random_id()}"
         payload = {
-            "id": doc_id,
-            "library_id": lib_id,
-            "name": f"Load Test Document {doc_id}",
+            "name": unique_name,
             "metadata": {"source": "locust_writes"},
         }
 
@@ -72,10 +73,11 @@ class WriteUser(HttpUser):
             catch_response=True,
         ) as response:
             if response.status_code == 201:
+                doc_id = response.json()["id"]
                 WriteUser.document_ids.append((doc_id, lib_id))
                 response.success()
             elif response.status_code == 409:
-                response.success()
+                response.success()  # Name conflict within library
             elif response.status_code == 404:
                 response.success()  # Library was deleted, not a failure
             else:
@@ -88,10 +90,7 @@ class WriteUser(HttpUser):
             return
 
         doc_id, lib_id = random.choice(WriteUser.document_ids)
-        chunk_id = random_id("loadtest_chunk_")
         payload = {
-            "id": chunk_id,
-            "document_id": doc_id,
             "text": random_text(),
             "metadata": {"position": random.randint(0, 100)},
         }
@@ -103,8 +102,8 @@ class WriteUser(HttpUser):
         ) as response:
             if response.status_code == 201:
                 response.success()
-            elif response.status_code in (404, 409):
-                response.success()  # Document gone or chunk exists
+            elif response.status_code == 404:
+                response.success()  # Document was deleted, not a failure
             else:
                 response.failure(f"Status {response.status_code}")
 
@@ -119,8 +118,6 @@ class WriteUser(HttpUser):
 
         chunks = [
             {
-                "id": random_id("loadtest_chunk_"),
-                "document_id": doc_id,
                 "text": random_text(),
                 "metadata": {"position": i, "batch": True},
             }
@@ -135,7 +132,7 @@ class WriteUser(HttpUser):
         ) as response:
             if response.status_code == 201:
                 response.success()
-            elif response.status_code in (404, 409):
-                response.success()
+            elif response.status_code == 404:
+                response.success()  # Document was deleted, not a failure
             else:
                 response.failure(f"Status {response.status_code}")

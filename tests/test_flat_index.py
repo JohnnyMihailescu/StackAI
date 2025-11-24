@@ -13,12 +13,12 @@ class MockFlatIndexStore:
     """In-memory mock of FlatIndexStore for testing."""
 
     def __init__(self):
-        self._data: dict[str, dict] = {}
+        self._data: dict[int, dict] = {}
 
-    def exists(self, library_id: str) -> bool:
+    def exists(self, library_id: int) -> bool:
         return library_id in self._data
 
-    def load_metadata(self, library_id: str) -> dict:
+    def load_metadata(self, library_id: int) -> dict:
         data = self._data[library_id]
         return {
             "ids": data["ids"],
@@ -26,14 +26,14 @@ class MockFlatIndexStore:
             "metric": data["metric"],
         }
 
-    def load_vectors(self, library_id: str) -> np.ndarray:
+    def load_vectors(self, library_id: int) -> np.ndarray:
         return self._data[library_id]["vectors"]
 
     def save(
         self,
-        library_id: str,
+        library_id: int,
         vectors: np.ndarray,
-        ids: List[str],
+        ids: List[int],
         dimension: int,
         metric: DistanceMetric,
     ) -> None:
@@ -44,7 +44,7 @@ class MockFlatIndexStore:
             "metric": metric,
         }
 
-    def delete_index(self, library_id: str) -> None:
+    def delete_index(self, library_id: int) -> None:
         if library_id in self._data:
             del self._data[library_id]
 
@@ -52,7 +52,7 @@ class MockFlatIndexStore:
 class TestFlatIndex:
     """Test suite for FlatIndex."""
 
-    LIBRARY_ID = "test_library"
+    LIBRARY_ID = 1
 
     @pytest.fixture
     def mock_store(self):
@@ -73,13 +73,13 @@ class TestFlatIndex:
         """Create sample vectors for testing."""
         # Create 5 vectors in 3D space
         vectors = np.array([
-            [1.0, 0.0, 0.0],  # id: vec_1
-            [0.0, 1.0, 0.0],  # id: vec_2
-            [0.0, 0.0, 1.0],  # id: vec_3
-            [0.7, 0.7, 0.0],  # id: vec_4 (similar to vec_1 and vec_2)
-            [1.0, 0.1, 0.0],  # id: vec_5 (very similar to vec_1)
+            [1.0, 0.0, 0.0],  # id: 1
+            [0.0, 1.0, 0.0],  # id: 2
+            [0.0, 0.0, 1.0],  # id: 3
+            [0.7, 0.7, 0.0],  # id: 4 (similar to 1 and 2)
+            [1.0, 0.1, 0.0],  # id: 5 (very similar to 1)
         ])
-        ids = ["vec_1", "vec_2", "vec_3", "vec_4", "vec_5"]
+        ids = [1, 2, 3, 4, 5]
         return vectors, ids
 
     @pytest.fixture
@@ -119,34 +119,34 @@ class TestFlatIndex:
         """Test that adding vectors with wrong dimension raises error."""
         wrong_dim_vectors = np.array([[1.0, 2.0]])  # 2D instead of 3D
         with pytest.raises(ValueError, match="dimension.*does not match"):
-            populated_index.add(wrong_dim_vectors, ["vec_6"])
+            populated_index.add(wrong_dim_vectors, [6])
 
     def test_add_mismatched_lengths(self, empty_index):
         """Test that mismatched vectors and ids raises error."""
         vectors = np.array([[1.0, 2.0, 3.0]])
-        ids = ["id_1", "id_2"]  # More IDs than vectors
+        ids = [1, 2]  # More IDs than vectors
         with pytest.raises(ValueError, match="must match number of ids"):
             empty_index.add(vectors, ids)
 
     def test_search_exact_match(self, populated_index):
         """Test searching for an exact match."""
-        query = np.array([1.0, 0.0, 0.0])  # Same as vec_1
+        query = np.array([1.0, 0.0, 0.0])  # Same as id 1
         results = populated_index.search(query, k=1)
 
         assert len(results) == 1
-        assert results[0][0] == "vec_1"
+        assert results[0][0] == 1
         assert results[0][1] == pytest.approx(1.0, abs=1e-6)  # Perfect similarity
 
     def test_search_top_k(self, populated_index):
         """Test searching for top-k neighbors."""
-        query = np.array([1.0, 0.0, 0.0])  # Same as vec_1
+        query = np.array([1.0, 0.0, 0.0])  # Same as id 1
         results = populated_index.search(query, k=3)
 
         assert len(results) == 3
-        # vec_1 should be first (exact match)
-        assert results[0][0] == "vec_1"
-        # vec_5 should be second (very similar: [1.0, 0.1, 0.0])
-        assert results[1][0] == "vec_5"
+        # id 1 should be first (exact match)
+        assert results[0][0] == 1
+        # id 5 should be second (very similar: [1.0, 0.1, 0.0])
+        assert results[1][0] == 5
         # Results should be sorted by similarity (descending)
         assert results[0][1] >= results[1][1] >= results[2][1]
 
@@ -179,30 +179,30 @@ class TestFlatIndex:
         )
         # Create vectors with known cosine similarities
         vectors = np.array([
-            [1.0, 0.0],    # vec_1: 0°
-            [0.0, 1.0],    # vec_2: 90°
-            [-1.0, 0.0],   # vec_3: 180°
+            [1.0, 0.0],    # id 1: 0°
+            [0.0, 1.0],    # id 2: 90°
+            [-1.0, 0.0],   # id 3: 180°
         ])
-        ids = ["vec_1", "vec_2", "vec_3"]
+        ids = [1, 2, 3]
         index.add(vectors, ids)
 
         # Query with [1, 0]
         query = np.array([1.0, 0.0])
         results = index.search(query, k=3)
 
-        # Cosine similarities: vec_1=1.0, vec_2=0.0, vec_3=-1.0
-        assert results[0][0] == "vec_1"
+        # Cosine similarities: id 1=1.0, id 2=0.0, id 3=-1.0
+        assert results[0][0] == 1
         assert results[0][1] == pytest.approx(1.0, abs=1e-6)
-        assert results[1][0] == "vec_2"
+        assert results[1][0] == 2
         assert results[1][1] == pytest.approx(0.0, abs=1e-6)
-        assert results[2][0] == "vec_3"
+        assert results[2][0] == 3
         assert results[2][1] == pytest.approx(-1.0, abs=1e-6)
 
     def test_delete_vectors(self, populated_index):
         """Test deleting vectors from index."""
         initial_stats = populated_index.get_stats()
         initial_count = initial_stats["num_vectors"]
-        populated_index.delete(["vec_1", "vec_3"])
+        populated_index.delete([1, 3])
 
         stats = populated_index.get_stats()
         assert stats["num_vectors"] == initial_count - 2
@@ -211,15 +211,15 @@ class TestFlatIndex:
         query = np.array([1.0, 0.0, 0.0])
         results = populated_index.search(query, k=10)
         result_ids = [r[0] for r in results]
-        assert "vec_1" not in result_ids
-        assert "vec_3" not in result_ids
-        assert "vec_2" in result_ids
+        assert 1 not in result_ids
+        assert 3 not in result_ids
+        assert 2 in result_ids
 
     def test_delete_nonexistent_id(self, populated_index):
         """Test deleting non-existent ID (should not error)."""
         initial_stats = populated_index.get_stats()
         initial_count = initial_stats["num_vectors"]
-        populated_index.delete(["nonexistent_id"])
+        populated_index.delete([999])
         stats = populated_index.get_stats()
         assert stats["num_vectors"] == initial_count
 
@@ -269,14 +269,14 @@ class TestFlatIndex:
             [3.0, 4.0],  # Length 5
             [5.0, 12.0],  # Length 13
         ])
-        ids = ["vec_1", "vec_2"]
+        ids = [1, 2]
         index.add(vectors, ids)
 
         # Verify vectors are normalized by checking search behavior
         # A normalized [3,4] is [0.6, 0.8], query with same direction should give similarity 1.0
         query = np.array([0.6, 0.8])
         results = index.search(query, k=1)
-        assert results[0][0] == "vec_1"
+        assert results[0][0] == 1
         assert results[0][1] == pytest.approx(1.0, abs=1e-6)
 
     def test_incremental_adds(self, mock_store):
@@ -288,12 +288,12 @@ class TestFlatIndex:
         )
         # Add first batch
         batch1 = np.array([[1.0, 0.0]])
-        index.add(batch1, ["vec_1"])
+        index.add(batch1, [1])
         assert index.get_stats()["num_vectors"] == 1
 
         # Add second batch
         batch2 = np.array([[0.0, 1.0], [1.0, 1.0]])
-        index.add(batch2, ["vec_2", "vec_3"])
+        index.add(batch2, [2, 3])
         assert index.get_stats()["num_vectors"] == 3
 
         # Verify all vectors are searchable
@@ -303,17 +303,17 @@ class TestFlatIndex:
 
     def test_get_vector(self, populated_index):
         """Test retrieving a vector by ID."""
-        vector = populated_index.get_vector("vec_1")
+        vector = populated_index.get_vector(1)
         assert vector is not None
-        # vec_1 was [1.0, 0.0, 0.0], normalized stays the same
+        # id 1 was [1.0, 0.0, 0.0], normalized stays the same
         assert vector.shape == (3,)
 
     def test_get_vector_nonexistent(self, populated_index):
         """Test retrieving a non-existent vector returns None."""
-        vector = populated_index.get_vector("nonexistent")
+        vector = populated_index.get_vector(999)
         assert vector is None
 
     def test_get_vector_empty_index(self, empty_index):
         """Test retrieving from empty index returns None."""
-        vector = empty_index.get_vector("vec_1")
+        vector = empty_index.get_vector(1)
         assert vector is None

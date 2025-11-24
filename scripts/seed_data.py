@@ -60,7 +60,7 @@ LIBRARIES = {
                     "Gradually mix the dry ingredients into the wet, being careful not to overmix.",
                     "Fold in the chocolate chips and chill the dough for at least 30 minutes.",
                     "Scoop rounded tablespoons onto a baking sheet lined with parchment paper.",
-                    "Bake at 375°F for 9-11 minutes until the edges are golden but centers look slightly underdone.",
+                    "Bake at 375F for 9-11 minutes until the edges are golden but centers look slightly underdone.",
                 ]
             },
             "chicken_tikka_masala": {
@@ -70,7 +70,7 @@ LIBRARIES = {
                     "For the marinade, combine 500g chicken breast with yogurt, garam masala, turmeric, and lemon juice.",
                     "Let the chicken marinate for at least 2 hours, or overnight for best results.",
                     "Thread the chicken onto skewers and grill or broil until slightly charred.",
-                    "For the sauce, sauté diced onions in butter until soft and golden.",
+                    "For the sauce, saute diced onions in butter until soft and golden.",
                     "Add minced garlic, ginger, and spices like cumin, coriander, and paprika.",
                     "Pour in crushed tomatoes and simmer for 15 minutes until the sauce thickens.",
                     "Stir in heavy cream and the grilled chicken pieces.",
@@ -82,7 +82,7 @@ LIBRARIES = {
                 "name": "French Onion Soup",
                 "chunks": [
                     "French Onion Soup is a rich, savory soup topped with crusty bread and melted cheese.",
-                    "You'll need 4 large onions, 4 tbsp butter, beef broth, dry white wine, and gruyère cheese.",
+                    "You'll need 4 large onions, 4 tbsp butter, beef broth, dry white wine, and gruyere cheese.",
                     "Slice the onions thinly and cook them in butter over medium-low heat.",
                     "Caramelizing onions properly takes 45 minutes to an hour - don't rush this step.",
                     "Stir occasionally and add a pinch of salt to help draw out moisture.",
@@ -90,7 +90,7 @@ LIBRARIES = {
                     "Pour in the beef broth and add a bay leaf and fresh thyme.",
                     "Simmer for 20 minutes to develop the flavors.",
                     "Ladle into oven-safe bowls and top with a slice of crusty bread.",
-                    "Cover generously with grated gruyère and broil until bubbly and golden.",
+                    "Cover generously with grated gruyere and broil until bubbly and golden.",
                 ]
             },
         }
@@ -248,48 +248,52 @@ LIBRARIES = {
 }
 
 
-def create_library(client: httpx.Client, library_id: str, name: str) -> bool:
-    """Create a library, return True if successful."""
-    response = client.post("/libraries", json={
-        "id": library_id,
-        "name": name,
-    })
+def create_library(client: httpx.Client, name: str) -> int | None:
+    """Create a library, return ID if successful."""
+    response = client.post("/libraries", json={"name": name})
     if response.status_code == 201:
-        print(f"Created library: {library_id}")
-        return True
+        lib_id = response.json()["id"]
+        print(f"Created library: {name} (id={lib_id})")
+        return lib_id
     elif response.status_code == 409:
-        print(f"Library already exists: {library_id}")
-        return True
+        print(f"Library already exists: {name}")
+        # Try to find existing library by listing
+        response = client.get("/libraries")
+        if response.status_code == 200:
+            for lib in response.json():
+                if lib["name"] == name:
+                    return lib["id"]
+        return None
     else:
         print(f"Failed to create library: {response.text}")
-        return False
+        return None
 
 
-def create_document(client: httpx.Client, library_id: str, doc_id: str, name: str) -> bool:
-    """Create a document, return True if successful."""
-    response = client.post(f"/libraries/{library_id}/documents", json={
-        "id": doc_id,
-        "library_id": library_id,
-        "name": name,
-    })
+def create_document(client: httpx.Client, library_id: int, name: str) -> int | None:
+    """Create a document, return ID if successful."""
+    response = client.post(f"/libraries/{library_id}/documents", json={"name": name})
     if response.status_code == 201:
-        print(f"  Created document: {name}")
-        return True
+        doc_id = response.json()["id"]
+        print(f"  Created document: {name} (id={doc_id})")
+        return doc_id
     elif response.status_code == 409:
-        print(f"  Document already exists: {doc_id}")
-        return True
+        print(f"  Document already exists: {name}")
+        # Try to find existing document by listing
+        response = client.get(f"/libraries/{library_id}/documents")
+        if response.status_code == 200:
+            for doc in response.json():
+                if doc["name"] == name:
+                    return doc["id"]
+        return None
     else:
         print(f"  Failed to create document: {response.text}")
-        return False
+        return None
 
 
-def create_chunks(client: httpx.Client, doc_id: str, texts: list[str]) -> int:
+def create_chunks(client: httpx.Client, document_id: int, texts: list[str]) -> int:
     """Create chunks for a document, return count created."""
-    chunks = [
-        {"id": f"{doc_id}_chunk_{i}", "document_id": doc_id, "text": text}
-        for i, text in enumerate(texts, 1)
-    ]
-    response = client.post(f"/documents/{doc_id}/chunks/batch", json={"chunks": chunks})
+    chunks = [{"text": text} for text in texts]
+    response = client.post(f"/documents/{document_id}/chunks/batch", json={"chunks": chunks})
     if response.status_code == 201:
         count = response.json()["created_count"]
         print(f"    Created {count} chunks")
@@ -302,19 +306,19 @@ def create_chunks(client: httpx.Client, doc_id: str, texts: list[str]) -> int:
 def seed_library(client: httpx.Client, library_key: str) -> int:
     """Seed a single library with data."""
     library_data = LIBRARIES[library_key]
-    library_id = f"{library_key}_lib"
 
     print(f"\n{'='*50}")
     print(f"Seeding library: {library_data['name']}")
     print('='*50)
 
-    if not create_library(client, library_id, library_data["name"]):
+    library_id = create_library(client, library_data["name"])
+    if library_id is None:
         return 0
 
     total_chunks = 0
     for doc_key, doc_data in library_data["documents"].items():
-        doc_id = f"{library_key}_{doc_key}"
-        if create_document(client, library_id, doc_id, doc_data["name"]):
+        doc_id = create_document(client, library_id, doc_data["name"])
+        if doc_id is not None:
             total_chunks += create_chunks(client, doc_id, doc_data["chunks"])
 
     return total_chunks
@@ -353,18 +357,11 @@ def main():
     print('='*50)
 
     # Show example searches
-    print("\nExample searches to try:\n")
-    examples = {
-        "recipes": ("recipes_lib", "How do I make a creamy pasta sauce?"),
-        "support": ("support_lib", "How do I reset my password?"),
-        "products": ("products_lib", "How do I connect bluetooth headphones?"),
-    }
-    for lib_key in libraries_to_seed:
-        lib_id, query = examples[lib_key]
-        print(f"curl -X POST {BASE_URL}/libraries/{lib_id}/search \\")
-        print(f"  -H 'Content-Type: application/json' \\")
-        print(f"  -d '{{\"query\": \"{query}\", \"k\": 3}}'")
-        print()
+    print("\nExample searches to try (use actual library IDs from above):\n")
+    print(f"curl -X POST {BASE_URL}/libraries/1/search \\")
+    print(f"  -H 'Content-Type: application/json' \\")
+    print(f"  -d '{{\"query\": \"How do I make a creamy pasta sauce?\", \"k\": 3}}'")
+    print()
 
 
 if __name__ == "__main__":

@@ -17,8 +17,8 @@ class ReadUser(HttpUser):
     wait_time = between(0.5, 2)
 
     # Cache library/document IDs discovered during test
-    library_ids: list[str] = []
-    document_ids: list[tuple[str, str]] = []  # (doc_id, library_id)
+    library_ids: list[int] = []
+    document_ids: list[tuple[int, int]] = []  # (doc_id, library_id)
 
     def on_start(self):
         """Discover existing data when user starts."""

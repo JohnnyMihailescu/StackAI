@@ -27,7 +27,7 @@ class SearchUser(HttpUser):
     wait_time = between(0.5, 1.5)  # Faster to stress search
 
     # Libraries discovered at startup
-    library_ids: list[str] = []
+    library_ids: list[int] = []
 
     def on_start(self):
         """Discover libraries with data to search."""

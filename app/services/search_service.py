@@ -21,7 +21,7 @@ class SearchService:
     """
 
     @classmethod
-    async def _get_library_index_type(cls, library_id: str) -> IndexType:
+    async def _get_library_index_type(cls, library_id: int) -> IndexType:
         """
         Get the index type for a library.
         """
@@ -30,7 +30,7 @@ class SearchService:
 
     @classmethod
     async def _get_index(
-        cls, library_id: str
+        cls, library_id: int
     ) -> FlatIndex | IVFIndex | None:
         """Get the index for a library, or None if it doesn't exist.
 
@@ -56,7 +56,7 @@ class SearchService:
     @classmethod
     async def _get_or_create_index(
         cls,
-        library_id: str,
+        library_id: int,
         index_type: IndexType,
         metric: DistanceMetric,
     ) -> FlatIndex | IVFIndex:
@@ -85,9 +85,9 @@ class SearchService:
     @classmethod
     async def add_vectors(
         cls,
-        library_id: str,
+        library_id: int,
         vectors: np.ndarray,
-        ids: list[str],
+        ids: list[int],
         index_type: IndexType = IndexType.FLAT,
         metric: DistanceMetric = DistanceMetric.COSINE,
     ) -> None:
@@ -108,7 +108,7 @@ class SearchService:
             index.save_to_store(StorageService.ivf_index_store())
 
     @classmethod
-    async def delete_vectors(cls, library_id: str, ids: list[str]) -> None:
+    async def delete_vectors(cls, library_id: int, ids: list[int]) -> None:
         """Delete vectors from a library's index.
 
         Args:
@@ -130,7 +130,7 @@ class SearchService:
 
     @classmethod
     async def search(
-        cls, library_id: str, query_vector: np.ndarray, k: int
+        cls, library_id: int, query_vector: np.ndarray, k: int
     ) -> list[SearchResult]:
         """Search for similar chunks in a library's index.
 
@@ -157,7 +157,7 @@ class SearchService:
         return results
 
     @classmethod
-    async def get_embedding(cls, library_id: str, chunk_id: str) -> list[float] | None:
+    async def get_embedding(cls, library_id: int, chunk_id: int) -> list[float] | None:
         """Get the embedding for a chunk from the index.
 
         Args:
@@ -177,14 +177,14 @@ class SearchService:
         return vector.tolist()
 
     @classmethod
-    async def delete_index(cls, library_id: str) -> None:
+    async def delete_index(cls, library_id: int) -> None:
         """Delete the index for a library."""
         # Delete from both stores in case index type changed
         StorageService.flat_index_store().delete_index(library_id)
         StorageService.ivf_index_store().delete_index(library_id)
 
     @classmethod
-    async def get_stats(cls, library_id: str) -> dict:
+    async def get_stats(cls, library_id: int) -> dict:
         """Get stats for a library's index."""
         index = await cls._get_index(library_id)
         if index is None:

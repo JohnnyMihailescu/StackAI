@@ -23,7 +23,7 @@ class FlatIndex(BaseIndex):
 
     def __init__(
         self,
-        library_id: str,
+        library_id: int,
         store: FlatIndexStore,
         metric: DistanceMetric = DistanceMetric.COSINE,
     ):
@@ -40,7 +40,7 @@ class FlatIndex(BaseIndex):
         self._store = store
 
     @classmethod
-    def load_from_store(cls, store: FlatIndexStore, library_id: str) -> FlatIndex:
+    def load_from_store(cls, store: FlatIndexStore, library_id: int) -> FlatIndex:
         """Load index configuration from store.
 
         Args:
@@ -60,12 +60,12 @@ class FlatIndex(BaseIndex):
         index.num_vectors = len(metadata["ids"])
         return index
 
-    def add(self, vectors: np.ndarray, ids: List[str]) -> None:
+    def add(self, vectors: np.ndarray, ids: List[int]) -> None:
         """Add vectors to the index.
 
         Args:
             vectors: Array of shape (n, d) where n is number of vectors and d is dimension
-            ids: List of string IDs corresponding to each vector
+            ids: List of integer IDs corresponding to each vector
 
         Raises:
             ValueError: If vectors and ids have different lengths
@@ -113,7 +113,7 @@ class FlatIndex(BaseIndex):
             metric=self.metric,
         )
 
-    def search(self, query_vector: np.ndarray, k: int) -> List[Tuple[str, float]]:
+    def search(self, query_vector: np.ndarray, k: int) -> List[Tuple[int, float]]:
         """Search for k nearest neighbors.
 
         Args:
@@ -144,7 +144,7 @@ class FlatIndex(BaseIndex):
 
         return similarity_search(query_vector, vectors, ids, k, self.metric)
 
-    def delete(self, ids: List[str]) -> None:
+    def delete(self, ids: List[int]) -> None:
         """Delete vectors from the index by their IDs.
 
         Args:
@@ -192,7 +192,7 @@ class FlatIndex(BaseIndex):
             )
             self.num_vectors = len(new_ids)
 
-    def get_vector(self, vector_id: str) -> np.ndarray | None:
+    def get_vector(self, vector_id: int) -> np.ndarray | None:
         """Get a vector by its ID.
 
         Args:

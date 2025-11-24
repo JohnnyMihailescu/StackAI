@@ -3,7 +3,7 @@
 import logging
 import numpy as np
 from fastapi import APIRouter, HTTPException, status
-from app.models.chunk import Chunk, BatchChunksRequest, BatchChunksResponse
+from app.models.chunk import Chunk, ChunkCreate, BatchChunksRequest, BatchChunksResponse
 from app.config import settings
 from app.services.embeddings import EmbeddingService
 from app.services.search_service import SearchService
@@ -19,51 +19,40 @@ router = APIRouter()
     response_model=Chunk,
     status_code=status.HTTP_201_CREATED
 )
-async def create_chunk(document_id: str, chunk: Chunk):
+async def create_chunk(document_id: int, chunk_create: ChunkCreate):
     """Create a new chunk in a document."""
-    # Verify document exists
     document = await StorageService.documents().get(document_id)
     if document is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Document with id '{document_id}' not found"
+            detail=f"Document with id {document_id} not found"
         )
 
-    # Get library for index settings
     library = await StorageService.libraries().get(document.library_id)
     if library is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Library with id '{document.library_id}' not found"
+            detail=f"Library with id {document.library_id} not found"
         )
 
-    # Verify chunk belongs to this document
-    if chunk.document_id != document_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Chunk document_id must match URL document_id"
-        )
-
-    logger.info(f"Creating chunk: text='{chunk.text[:50]}...' (document='{document.name}')")
+    text_preview = chunk_create.text[:50] + "..." if len(chunk_create.text) > 50 else chunk_create.text
+    logger.info(f"Creating chunk: text='{text_preview}' (document='{document.name}')")
 
     # Generate embedding
-    embedding = EmbeddingService.embed_texts([chunk.text])[0]
-    chunk.embedding = embedding
+    embedding = EmbeddingService.embed_texts([chunk_create.text])[0]
 
     # Store chunk
-    try:
-        created_chunk = await StorageService.chunks().create(chunk)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    created_chunk = await StorageService.chunks().create(document_id, chunk_create)
+    created_chunk.embedding = embedding
 
     # Add to vector index
     vectors = np.array([embedding])
     await SearchService.add_vectors(
-        library.id, vectors, [chunk.id],
+        library.id, vectors, [created_chunk.id],
         index_type=library.index_type, metric=library.metric
     )
 
-    logger.info(f"Chunk created (document='{document.name}')")
+    logger.info(f"Chunk created: id={created_chunk.id} (document='{document.name}')")
     return created_chunk
 
 
@@ -72,54 +61,26 @@ async def create_chunk(document_id: str, chunk: Chunk):
     response_model=BatchChunksResponse,
     status_code=status.HTTP_201_CREATED
 )
-async def create_chunks_batch(document_id: str, request: BatchChunksRequest):
+async def create_chunks_batch(document_id: int, request: BatchChunksRequest):
     """Create multiple chunks in a document at once."""
-    # Validate batch size
     if len(request.chunks) > settings.max_batch_size:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Batch size {len(request.chunks)} exceeds maximum of {settings.max_batch_size}"
         )
 
-    # Verify document exists
     document = await StorageService.documents().get(document_id)
     if document is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Document with id '{document_id}' not found"
+            detail=f"Document with id {document_id} not found"
         )
 
-    # Get library for index settings
     library = await StorageService.libraries().get(document.library_id)
     if library is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Library with id '{document.library_id}' not found"
-        )
-
-    # Validate all chunks belong to this document
-    invalid_chunks = [c.id for c in request.chunks if c.document_id != document_id]
-    if invalid_chunks:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Chunks must belong to document '{document_id}'. Invalid chunks: {invalid_chunks}"
-        )
-
-    # Check for duplicate IDs within the batch
-    batch_ids = [c.id for c in request.chunks]
-    if len(batch_ids) != len(set(batch_ids)):
-        duplicates = [id for id in batch_ids if batch_ids.count(id) > 1]
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Duplicate chunk IDs in batch: {list(set(duplicates))}"
-        )
-
-    # Check for existing IDs in database
-    existing_ids = await StorageService.chunks().find_existing(batch_ids)
-    if existing_ids:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Chunks with these IDs already exist: {existing_ids}"
+            detail=f"Library with id {document.library_id} not found"
         )
 
     logger.info(f"Creating {len(request.chunks)} chunks (document='{document.name}')")
@@ -128,12 +89,12 @@ async def create_chunks_batch(document_id: str, request: BatchChunksRequest):
     texts = [chunk.text for chunk in request.chunks]
     embeddings = EmbeddingService.embed_texts(texts)
 
-    # Assign embeddings to chunks
-    for chunk, embedding in zip(request.chunks, embeddings):
-        chunk.embedding = embedding
+    # Store chunks (IDs assigned by storage layer)
+    created_chunks = await StorageService.chunks().create_batch(document_id, request.chunks)
 
-    # Store chunks
-    created_chunks = await StorageService.chunks().create_batch(request.chunks)
+    # Attach embeddings to returned chunks
+    for chunk, embedding in zip(created_chunks, embeddings):
+        chunk.embedding = embedding
 
     # Add all vectors to index
     vectors = np.array(embeddings)
@@ -151,13 +112,13 @@ async def create_chunks_batch(document_id: str, request: BatchChunksRequest):
 
 
 @router.get("/documents/{document_id}/chunks", response_model=list[Chunk])
-async def list_chunks(document_id: str, include_embedding: bool = False):
+async def list_chunks(document_id: int, include_embedding: bool = False):
     """List all chunks in a document."""
     document = await StorageService.documents().get(document_id)
     if document is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Document with id '{document_id}' not found"
+            detail=f"Document with id {document_id} not found"
         )
 
     chunks = await StorageService.chunks().list_by_document(document_id)
@@ -172,20 +133,19 @@ async def list_chunks(document_id: str, include_embedding: bool = False):
 
 
 @router.get("/chunks/{chunk_id}", response_model=Chunk)
-async def get_chunk(chunk_id: str, include_embedding: bool = False):
+async def get_chunk(chunk_id: int, include_embedding: bool = False):
     """Get a specific chunk by ID."""
     chunk = await StorageService.chunks().get(chunk_id)
     if chunk is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Chunk with id '{chunk_id}' not found"
+            detail=f"Chunk with id {chunk_id} not found"
         )
 
     if include_embedding:
-        # Get library_id via document
         document = await StorageService.documents().get(chunk.document_id)
         if document:
-            embedding = await SearchService.get_embedding(document.library_id, chunk_id)
+            embedding = await SearchService.get_embedding(document.library_id, chunk.id)
             if embedding:
                 chunk.embedding = embedding
 
@@ -193,26 +153,22 @@ async def get_chunk(chunk_id: str, include_embedding: bool = False):
 
 
 @router.delete("/chunks/{chunk_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_chunk(chunk_id: str):
+async def delete_chunk(chunk_id: int):
     """Delete a chunk."""
-    # Get chunk to find its document_id
     chunk = await StorageService.chunks().get(chunk_id)
     if chunk is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Chunk with id '{chunk_id}' not found"
+            detail=f"Chunk with id {chunk_id} not found"
         )
 
-    # Get document to find library_id
     document = await StorageService.documents().get(chunk.document_id)
     library_id = document.library_id if document else None
 
-    logger.info(f"Deleting chunk (document='{document.name if document else 'unknown'}')")
+    logger.info(f"Deleting chunk id={chunk_id} (document='{document.name if document else 'unknown'}')")
 
-    # Delete from storage
     await StorageService.chunks().delete(chunk_id)
 
-    # Remove from vector index
     if library_id:
         await SearchService.delete_vectors(library_id, [chunk_id])
 

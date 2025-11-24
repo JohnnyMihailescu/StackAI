@@ -18,7 +18,7 @@ router = APIRouter()
     response_model=SearchResponse,
 )
 async def search_library(
-    library_id: str,
+    library_id: int,
     request: SearchRequest,
     include_embedding: bool = False,
 ):
@@ -26,12 +26,11 @@ async def search_library(
 
     Embeds the query text and finds the most similar chunks using cosine similarity.
     """
-    # Verify library exists
     library = await StorageService.libraries().get(library_id)
     if library is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Library with id '{library_id}' not found",
+            detail=f"Library with id {library_id} not found",
         )
 
     logger.info(f"Searching: query='{request.query}' k={request.k} (library='{library.name}')")
