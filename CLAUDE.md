@@ -79,7 +79,9 @@ app/
 ├── models/
 │   ├── library.py             # Library model
 │   ├── document.py            # Document model
-│   └── chunk.py               # Chunk model + batch request/response
+│   ├── chunk.py               # Chunk model + batch request/response
+│   ├── search.py              # Search request/response models
+│   └── enums.py               # IndexType, DistanceMetric enums
 ├── routers/
 │   ├── libraries.py           # Library CRUD endpoints
 │   ├── documents.py           # Document CRUD endpoints
@@ -91,25 +93,43 @@ app/
 │   ├── search_service.py      # Vector search orchestration
 │   └── indexes/
 │       ├── base.py            # Abstract BaseIndex interface
-│       └── flat_index.py      # Brute-force cosine similarity search
+│       ├── flat_index.py      # Brute-force cosine similarity search
+│       ├── ivf_index.py       # IVF index with k-means clustering
+│       ├── sequential_kmeans.py # Sequential k-means for clustering
+│       └── utils.py           # Shared index utilities
 └── storage/
     ├── rwlock.py              # Async Reader-Writer lock
     ├── base_store.py          # Abstract base for entity stores
     ├── library_store.py       # Library CRUD with locking
     ├── document_store.py      # Document CRUD with locking
     ├── chunk_store.py         # Chunk CRUD + embeddings with locking
+    ├── flat_index_store.py    # Flat index persistence
+    ├── ivf_index_store.py     # IVF index persistence
     └── file_io_utils.py       # Atomic file I/O utilities
 
 data/                          # Persisted data (gitignored)
 ├── libraries.json             # Library metadata (JSON dict keyed by ID)
 ├── documents.json             # Document metadata (JSON dict keyed by ID)
 ├── chunks.json                # Chunk metadata only (no embeddings)
-└── indexes/                   # Vector indexes, one .npz file per library
-    └── {library_id}.npz       # NumPy arrays: vectors + chunk IDs
+└── indexes/                   # Vector indexes
+    ├── {library_id}.npz       # Flat index: NumPy arrays (vectors + chunk IDs)
+    └── {library_id}/          # IVF index: directory per library
+        ├── index_meta.json    # Index configuration
+        ├── centroids.npy      # Cluster centroids (k × d)
+        └── cluster_*.npy      # Vectors for each cluster
 
 tests/
-├── test_flat_index.py         # 33 tests for FlatIndex
-└── test_chunks_batch.py       # 13 tests for batch endpoint
+├── test_flat_index.py         # 319 tests for FlatIndex
+├── test_ivf_index.py          # 445 tests for IVFIndex
+├── test_chunks_batch.py       # 176 tests for batch endpoint
+├── test_libraries.py          # 192 tests for library endpoints
+├── test_documents.py          # 321 tests for document endpoints
+├── test_search.py             # 293 tests for search functionality
+└── test_persistence.py        # 248 tests for data persistence
+
+notebooks/
+├── vector_database_exploration.ipynb  # Initial exploration
+└── index_comparison.ipynb             # Flat vs IVF performance comparison
 
 Dockerfile                     # Container build definition
 docker-compose.yml             # Local development orchestration
@@ -152,17 +172,24 @@ Vector indexes are implemented from scratch using NumPy:
 - Suitable for <100k vectors
 - Use when accuracy is critical
 
-**IVF Index** (planned)
+**IVF Index** (`app/services/indexes/ivf_index.py`)
 - Inverted File index using k-means clustering
-- Faster search by only checking relevant clusters
-- Configurable speed/accuracy tradeoff
-- Suitable for larger datasets
+- Partitions vectors into clusters, only searches relevant clusters at query time
+- Sequential k-means implementation that adapts as vectors are added
+- Lazy loading: cluster vectors loaded on-demand during search (saves memory)
+- Configurable speed/accuracy tradeoff via `n_clusters` and `n_probe` settings
+- O(n_probe × n/n_clusters) search complexity
+- Suitable for larger datasets (>100k vectors)
+- Use when speed is more important than perfect recall
 
 All indexes implement the `BaseIndex` interface:
 - `add(vectors, ids)` - Add vectors to index
 - `search(query_vector, k)` - Find k nearest neighbors
 - `delete(ids)` - Remove vectors by ID
+- `get_vector(id)` - Retrieve a vector by ID
 - `get_stats()` - Get index statistics
+- `save_to_store(store)` - Persist index to disk
+- `load_from_store(store, library_id)` - Load index from disk
 
 ## API Endpoints
 
@@ -216,7 +243,7 @@ Routers → StorageService → Individual Stores (with RWLock) → Persistence
 
 - **StorageService** (`app/services/storage_service.py`): Singleton providing access to all stores
 - **Stores** (`app/storage/`): Each entity type has its own store with RWLock protection
-- **Persistence**: JSON for metadata, NumPy `.npy` for embeddings
+- **Persistence**: JSON for metadata, NumPy `.npz`/`.npy` for embeddings and index data
 
 ### Memory Model
 
@@ -227,12 +254,13 @@ Routers → StorageService → Individual Stores (with RWLock) → Persistence
 - **Implication:** Memory usage scales with number of entities and chunk text size
 
 **Embeddings (vectors):**
-- **Lazy loaded** from `.npy` files on each operation (search, add, delete)
+- **Flat indexes:** Lazy loaded from `.npz` files on each operation (search, add, delete)
+- **IVF indexes:** Metadata loaded at startup, cluster vectors loaded on-demand during search
 - NOT cached in memory between operations
 - Each search loads vectors fresh from disk
 - **Implication:** Low memory usage for embeddings, but disk I/O on every search
 
-This design prioritizes memory efficiency for embeddings (which are large: 1024 floats × 4 bytes = 4KB per chunk) over query latency. For high-throughput production use, consider adding an LRU cache for frequently-accessed indexes.
+This design prioritizes memory efficiency for embeddings (which are large: 1024 floats × 4 bytes = 4KB per chunk) over query latency. IVF indexes further optimize by only loading the cluster vectors being searched. For high-throughput production use, consider adding an LRU cache for frequently-accessed indexes.
 
 ### Async Requirements
 
@@ -314,6 +342,8 @@ Settings loaded from `.env` via pydantic-settings (`app/config.py`):
 | `COHERE_EMBED_MODEL` | `embed-english-v3.0` | Embedding model |
 | `COHERE_BATCH_SIZE` | `96` | Max texts per API call |
 | `MAX_BATCH_SIZE` | `500` | Max chunks per batch request |
+| `IVF_DEFAULT_CLUSTERS` | `100` | Number of clusters for IVF index |
+| `IVF_DEFAULT_N_PROBE` | `10` | Number of clusters to search at query time |
 | `DEBUG` | `false` | Enable debug mode (sets log level to DEBUG) |
 | `DATA_DIR` | `data` | Directory for persisted data |
 
