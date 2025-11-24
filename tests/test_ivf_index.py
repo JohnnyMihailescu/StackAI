@@ -2,8 +2,6 @@
 
 import numpy as np
 import pytest
-import tempfile
-from pathlib import Path
 
 from app.models.enums import DistanceMetric
 from app.services.indexes.ivf_index import IVFIndex
@@ -12,9 +10,11 @@ from app.services.indexes.ivf_index import IVFIndex
 class TestIVFIndexInitialization:
     """Test IVFIndex initialization."""
 
+    LIBRARY_ID = "test_library"
+
     def test_empty_index_state(self):
         """Empty index should have zero vectors and dimension."""
-        index = IVFIndex()
+        index = IVFIndex(library_id=self.LIBRARY_ID)
         assert index.num_vectors == 0
         assert index.dimension == 0
         assert index.n_clusters == 100  # default
@@ -22,23 +22,30 @@ class TestIVFIndexInitialization:
 
     def test_custom_parameters(self):
         """Index should respect custom parameters."""
-        index = IVFIndex(n_clusters=50, n_probe=5, metric=DistanceMetric.EUCLIDEAN)
+        index = IVFIndex(
+            library_id=self.LIBRARY_ID,
+            n_clusters=50,
+            n_probe=5,
+            metric=DistanceMetric.EUCLIDEAN,
+        )
         assert index.n_clusters == 50
         assert index.n_probe == 5
         assert index.metric == DistanceMetric.EUCLIDEAN
 
     def test_n_probe_capped_to_n_clusters(self):
         """n_probe should not exceed n_clusters."""
-        index = IVFIndex(n_clusters=10, n_probe=20)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=10, n_probe=20)
         assert index.n_probe == 10
 
 
 class TestIVFIndexAdd:
     """Test adding vectors to IVFIndex."""
 
+    LIBRARY_ID = "test_library"
+
     def test_add_single_vector(self):
         """Adding a single vector should work."""
-        index = IVFIndex(n_clusters=5)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=5)
         vectors = np.random.randn(1, 128).astype(np.float32)
         ids = ["id1"]
 
@@ -49,7 +56,7 @@ class TestIVFIndexAdd:
 
     def test_add_batch_vectors(self):
         """Adding multiple vectors should work."""
-        index = IVFIndex(n_clusters=5)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=5)
         vectors = np.random.randn(10, 64).astype(np.float32)
         ids = [f"id{i}" for i in range(10)]
 
@@ -61,7 +68,7 @@ class TestIVFIndexAdd:
     def test_bootstrap_phase(self):
         """First n_clusters vectors should become centroids."""
         n_clusters = 5
-        index = IVFIndex(n_clusters=n_clusters)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=n_clusters)
 
         # Add exactly n_clusters vectors
         vectors = np.random.randn(n_clusters, 32).astype(np.float32)
@@ -74,7 +81,7 @@ class TestIVFIndexAdd:
     def test_post_bootstrap_vectors_assigned_to_clusters(self):
         """Vectors after bootstrap should be assigned to existing clusters."""
         n_clusters = 5
-        index = IVFIndex(n_clusters=n_clusters)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=n_clusters)
 
         # Bootstrap phase
         vectors1 = np.random.randn(n_clusters, 32).astype(np.float32)
@@ -91,13 +98,13 @@ class TestIVFIndexAdd:
 
     def test_add_empty_batch(self):
         """Adding empty batch should be no-op."""
-        index = IVFIndex(n_clusters=5)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=5)
         index.add(np.array([]).reshape(0, 64), [])
         assert index.num_vectors == 0
 
     def test_dimension_mismatch_raises(self):
         """Adding vectors with wrong dimension should raise."""
-        index = IVFIndex(n_clusters=5)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=5)
         vectors1 = np.random.randn(3, 64).astype(np.float32)
         index.add(vectors1, ["a", "b", "c"])
 
@@ -107,7 +114,7 @@ class TestIVFIndexAdd:
 
     def test_mismatched_vectors_ids_raises(self):
         """Mismatched vectors and IDs should raise."""
-        index = IVFIndex(n_clusters=5)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=5)
         vectors = np.random.randn(5, 64).astype(np.float32)
         ids = ["a", "b", "c"]  # Only 3 IDs for 5 vectors
 
@@ -118,16 +125,18 @@ class TestIVFIndexAdd:
 class TestIVFIndexSearch:
     """Test IVFIndex search functionality."""
 
+    LIBRARY_ID = "test_library"
+
     def test_search_empty_index(self):
         """Searching empty index should return empty list."""
-        index = IVFIndex(n_clusters=5)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=5)
         query = np.random.randn(64).astype(np.float32)
         results = index.search(query, k=5)
         assert results == []
 
     def test_search_returns_correct_format(self):
         """Search should return list of (id, score) tuples."""
-        index = IVFIndex(n_clusters=5, n_probe=5)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=5, n_probe=5)
         vectors = np.random.randn(10, 64).astype(np.float32)
         ids = [f"id{i}" for i in range(10)]
         index.add(vectors, ids)
@@ -142,7 +151,12 @@ class TestIVFIndexSearch:
 
     def test_search_finds_exact_match(self):
         """Search should find exact match with highest score."""
-        index = IVFIndex(n_clusters=5, n_probe=5, metric=DistanceMetric.COSINE)
+        index = IVFIndex(
+            library_id=self.LIBRARY_ID,
+            n_clusters=5,
+            n_probe=5,
+            metric=DistanceMetric.COSINE,
+        )
 
         # Create distinct vectors
         vectors = np.eye(10, 64).astype(np.float32)  # Orthogonal vectors
@@ -159,7 +173,7 @@ class TestIVFIndexSearch:
 
     def test_search_respects_k(self):
         """Search should return at most k results."""
-        index = IVFIndex(n_clusters=5, n_probe=5)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=5, n_probe=5)
         vectors = np.random.randn(20, 64).astype(np.float32)
         ids = [f"id{i}" for i in range(20)]
         index.add(vectors, ids)
@@ -174,7 +188,7 @@ class TestIVFIndexSearch:
 
     def test_search_k_larger_than_index(self):
         """Requesting more results than vectors should return all vectors."""
-        index = IVFIndex(n_clusters=3, n_probe=3)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=3, n_probe=3)
         vectors = np.random.randn(5, 64).astype(np.float32)
         ids = [f"id{i}" for i in range(5)]
         index.add(vectors, ids)
@@ -186,7 +200,7 @@ class TestIVFIndexSearch:
 
     def test_search_results_sorted_by_score(self):
         """Results should be sorted by score descending."""
-        index = IVFIndex(n_clusters=5, n_probe=5)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=5, n_probe=5)
         vectors = np.random.randn(20, 64).astype(np.float32)
         ids = [f"id{i}" for i in range(20)]
         index.add(vectors, ids)
@@ -199,7 +213,7 @@ class TestIVFIndexSearch:
 
     def test_search_dimension_mismatch(self):
         """Query with wrong dimension should raise."""
-        index = IVFIndex(n_clusters=5)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=5)
         vectors = np.random.randn(10, 64).astype(np.float32)
         index.add(vectors, [f"id{i}" for i in range(10)])
 
@@ -211,9 +225,11 @@ class TestIVFIndexSearch:
 class TestIVFIndexDelete:
     """Test IVFIndex delete functionality."""
 
+    LIBRARY_ID = "test_library"
+
     def test_delete_single_vector(self):
         """Deleting a vector should remove it from the index."""
-        index = IVFIndex(n_clusters=5)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=5)
         vectors = np.random.randn(10, 64).astype(np.float32)
         ids = [f"id{i}" for i in range(10)]
         index.add(vectors, ids)
@@ -225,7 +241,7 @@ class TestIVFIndexDelete:
 
     def test_delete_multiple_vectors(self):
         """Deleting multiple vectors should work."""
-        index = IVFIndex(n_clusters=5)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=5)
         vectors = np.random.randn(10, 64).astype(np.float32)
         ids = [f"id{i}" for i in range(10)]
         index.add(vectors, ids)
@@ -236,7 +252,7 @@ class TestIVFIndexDelete:
 
     def test_delete_nonexistent_vector(self):
         """Deleting non-existent vector should be no-op."""
-        index = IVFIndex(n_clusters=5)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=5)
         vectors = np.random.randn(5, 64).astype(np.float32)
         ids = [f"id{i}" for i in range(5)]
         index.add(vectors, ids)
@@ -246,7 +262,7 @@ class TestIVFIndexDelete:
 
     def test_delete_all_vectors(self):
         """Deleting all vectors should reset index."""
-        index = IVFIndex(n_clusters=5)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=5)
         vectors = np.random.randn(5, 64).astype(np.float32)
         ids = [f"id{i}" for i in range(5)]
         index.add(vectors, ids)
@@ -258,7 +274,7 @@ class TestIVFIndexDelete:
 
     def test_delete_empty_list(self):
         """Deleting empty list should be no-op."""
-        index = IVFIndex(n_clusters=5)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=5)
         vectors = np.random.randn(5, 64).astype(np.float32)
         ids = [f"id{i}" for i in range(5)]
         index.add(vectors, ids)
@@ -270,9 +286,11 @@ class TestIVFIndexDelete:
 class TestIVFIndexGetVector:
     """Test getting vectors by ID."""
 
+    LIBRARY_ID = "test_library"
+
     def test_get_existing_vector(self):
         """Getting existing vector should return it."""
-        index = IVFIndex(n_clusters=5)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=5)
         vectors = np.random.randn(10, 64).astype(np.float32)
         ids = [f"id{i}" for i in range(10)]
         index.add(vectors, ids)
@@ -283,89 +301,21 @@ class TestIVFIndexGetVector:
 
     def test_get_nonexistent_vector(self):
         """Getting non-existent vector should return None."""
-        index = IVFIndex(n_clusters=5)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=5)
         vectors = np.random.randn(5, 64).astype(np.float32)
         index.add(vectors, [f"id{i}" for i in range(5)])
 
         assert index.get_vector("nonexistent") is None
 
 
-class TestIVFIndexPersistence:
-    """Test saving and loading IVFIndex."""
-
-    def test_save_load_roundtrip(self):
-        """Saving and loading should preserve index state."""
-        index = IVFIndex(n_clusters=5, n_probe=3, metric=DistanceMetric.COSINE)
-        vectors = np.random.randn(20, 64).astype(np.float32)
-        ids = [f"id{i}" for i in range(20)]
-        index.add(vectors, ids)
-
-        with tempfile.NamedTemporaryFile(suffix=".npz", delete=False) as f:
-            path = Path(f.name)
-
-        try:
-            index.save(path)
-            loaded = IVFIndex.load(path)
-
-            assert loaded.num_vectors == index.num_vectors
-            assert loaded.dimension == index.dimension
-            assert loaded.n_clusters == index.n_clusters
-            assert loaded.n_probe == index.n_probe
-            assert loaded.metric == index.metric
-            assert loaded.kmeans.num_centroids == index.kmeans.num_centroids
-        finally:
-            path.unlink()
-
-    def test_save_load_empty_index(self):
-        """Saving and loading empty index should work."""
-        index = IVFIndex(n_clusters=10)
-
-        with tempfile.NamedTemporaryFile(suffix=".npz", delete=False) as f:
-            path = Path(f.name)
-
-        try:
-            index.save(path)
-            loaded = IVFIndex.load(path)
-
-            assert loaded.num_vectors == 0
-        finally:
-            path.unlink()
-
-    def test_search_after_load(self):
-        """Search should work correctly after loading."""
-        index = IVFIndex(n_clusters=5, n_probe=5)
-        vectors = np.random.randn(20, 64).astype(np.float32)
-        ids = [f"id{i}" for i in range(20)]
-        index.add(vectors, ids)
-
-        # Search before save
-        query = vectors[0]
-        results_before = index.search(query, k=5)
-
-        with tempfile.NamedTemporaryFile(suffix=".npz", delete=False) as f:
-            path = Path(f.name)
-
-        try:
-            index.save(path)
-            loaded = IVFIndex.load(path)
-
-            # Search after load should give same results
-            results_after = loaded.search(query, k=5)
-
-            assert len(results_before) == len(results_after)
-            for (id1, score1), (id2, score2) in zip(results_before, results_after):
-                assert id1 == id2
-                assert abs(score1 - score2) < 1e-6
-        finally:
-            path.unlink()
-
-
 class TestIVFIndexStats:
     """Test index statistics."""
 
+    LIBRARY_ID = "test_library"
+
     def test_stats_empty_index(self):
         """Stats for empty index should be valid."""
-        index = IVFIndex(n_clusters=10, n_probe=5)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=10, n_probe=5)
         stats = index.get_stats()
 
         assert stats["index_type"] == "ivf"
@@ -377,7 +327,7 @@ class TestIVFIndexStats:
 
     def test_stats_with_vectors(self):
         """Stats should reflect index state."""
-        index = IVFIndex(n_clusters=5, n_probe=3)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=5, n_probe=3)
         vectors = np.random.randn(20, 64).astype(np.float32)
         index.add(vectors, [f"id{i}" for i in range(20)])
 
@@ -393,18 +343,28 @@ class TestIVFIndexStats:
 class TestIVFIndexEuclidean:
     """Test IVFIndex with Euclidean distance metric."""
 
+    LIBRARY_ID = "test_library"
+
     def test_euclidean_search(self):
         """Euclidean search should work correctly."""
-        index = IVFIndex(n_clusters=5, n_probe=5, metric=DistanceMetric.EUCLIDEAN)
+        index = IVFIndex(
+            library_id=self.LIBRARY_ID,
+            n_clusters=5,
+            n_probe=5,
+            metric=DistanceMetric.EUCLIDEAN,
+        )
 
         # Create vectors where id0 is closest to query
-        vectors = np.array([
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0],
-            [0.0, 0.0, 1.0],
-            [1.0, 1.0, 0.0],
-            [0.0, 1.0, 1.0],
-        ], dtype=np.float32)
+        vectors = np.array(
+            [
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [1.0, 1.0, 0.0],
+                [0.0, 1.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
         ids = [f"id{i}" for i in range(5)]
         index.add(vectors, ids)
 
@@ -418,7 +378,12 @@ class TestIVFIndexEuclidean:
 
     def test_euclidean_exact_match(self):
         """Exact match should have score close to 0 (distance 0)."""
-        index = IVFIndex(n_clusters=3, n_probe=3, metric=DistanceMetric.EUCLIDEAN)
+        index = IVFIndex(
+            library_id=self.LIBRARY_ID,
+            n_clusters=3,
+            n_probe=3,
+            metric=DistanceMetric.EUCLIDEAN,
+        )
 
         vectors = np.random.randn(5, 32).astype(np.float32)
         index.add(vectors, [f"id{i}" for i in range(5)])
@@ -434,9 +399,11 @@ class TestIVFIndexEuclidean:
 class TestSequentialKMeans:
     """Test sequential k-means behavior within IVFIndex."""
 
+    LIBRARY_ID = "test_library"
+
     def test_centroid_count_during_bootstrap(self):
         """Centroid count should increase during bootstrap."""
-        index = IVFIndex(n_clusters=10)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=10)
 
         for i in range(5):
             vectors = np.random.randn(1, 32).astype(np.float32)
@@ -446,7 +413,7 @@ class TestSequentialKMeans:
     def test_centroid_count_after_bootstrap(self):
         """Centroid count should stay constant after bootstrap."""
         n_clusters = 5
-        index = IVFIndex(n_clusters=n_clusters)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=n_clusters)
 
         # Fill bootstrap
         vectors = np.random.randn(n_clusters, 32).astype(np.float32)
@@ -461,7 +428,7 @@ class TestSequentialKMeans:
     def test_cluster_counts_updated(self):
         """Cluster counts should be updated as vectors are added."""
         n_clusters = 3
-        index = IVFIndex(n_clusters=n_clusters)
+        index = IVFIndex(library_id=self.LIBRARY_ID, n_clusters=n_clusters)
 
         # Bootstrap
         vectors = np.random.randn(n_clusters, 32).astype(np.float32)

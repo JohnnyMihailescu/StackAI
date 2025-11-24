@@ -1,13 +1,15 @@
 """Flat (brute force) vector index implementation."""
 
-from pathlib import Path
+from __future__ import annotations
+
 from typing import List, Tuple
 
 import numpy as np
 
-from app.models.enums import DistanceMetric, IndexType
+from app.models.enums import DistanceMetric
 from app.services.indexes.base import BaseIndex
 from app.services.indexes.utils import normalize_vectors, similarity_search
+from app.storage.flat_index_store import FlatIndexStore
 
 
 class FlatIndex(BaseIndex):
@@ -15,55 +17,47 @@ class FlatIndex(BaseIndex):
 
     This index provides 100% recall accuracy but has O(n) search complexity.
     Suitable for small to medium datasets (<100k vectors).
+
+    Data is loaded from the store on each operation - the store is the source of truth.
     """
 
-    def __init__(self, metric: DistanceMetric = DistanceMetric.COSINE):
+    def __init__(
+        self,
+        library_id: str,
+        store: FlatIndexStore,
+        metric: DistanceMetric = DistanceMetric.COSINE,
+    ):
         """Initialize the flat index.
 
         Args:
+            library_id: ID of the library this index belongs to
+            store: FlatIndexStore for data access
             metric: Distance metric to use for similarity search
         """
         super().__init__()
+        self.library_id = library_id
         self.metric = metric
-        self.vectors: np.ndarray = np.array([])
-        self.ids: List[str] = []
-        self._id_to_idx: dict[str, int] = {}
-
-    def save(self, path: Path) -> None:
-        """Save the index to disk.
-
-        Args:
-            path: File path to save the index to (will use .npz format)
-        """
-        np.savez(
-            path,
-            index_type=np.array([IndexType.FLAT.value]),
-            vectors=self.vectors,
-            ids=np.array(self.ids, dtype=object),
-            dimension=np.array([self.dimension]),
-            metric=np.array([self.metric.value]),
-        )
+        self._store = store
 
     @classmethod
-    def load(cls, path: Path) -> "FlatIndex":
-        """Load an index from disk.
+    def load_from_store(cls, store: FlatIndexStore, library_id: str) -> FlatIndex:
+        """Load index configuration from store.
 
         Args:
-            path: File path to load the index from
+            store: FlatIndexStore instance
+            library_id: ID of the library to load
 
         Returns:
-            A new FlatIndex instance with loaded data
+            FlatIndex configured for the library
         """
-        data = np.load(path, allow_pickle=True)
-
-        metric = DistanceMetric(data["metric"][0])
-        index = cls(metric=metric)
-        index.vectors = data["vectors"]
-        index.ids = data["ids"].tolist()
-        index.dimension = int(data["dimension"][0])
-        index.num_vectors = len(index.ids)
-        index._id_to_idx = {id_: i for i, id_ in enumerate(index.ids)}
-
+        metadata = store.load_metadata(library_id)
+        index = cls(
+            library_id=library_id,
+            store=store,
+            metric=metadata["metric"],
+        )
+        index.dimension = metadata["dimension"]
+        index.num_vectors = len(metadata["ids"])
         return index
 
     def add(self, vectors: np.ndarray, ids: List[str]) -> None:
@@ -83,31 +77,41 @@ class FlatIndex(BaseIndex):
         if len(vectors) == 0:
             return
 
-        # Normalize vectors for cosine similarity, keep original for euclidean
+        # Normalize vectors for cosine similarity
         if self.metric == DistanceMetric.COSINE:
-            vectors_to_store = normalize_vectors(vectors)
-        else:
-            vectors_to_store = vectors
+            vectors = normalize_vectors(vectors)
 
-        # Initialize or validate dimension
-        if self.num_vectors == 0:
-            self.dimension = vectors_to_store.shape[1]
-            self.vectors = vectors_to_store
-        else:
-            if vectors_to_store.shape[1] != self.dimension:
+        # Load existing data
+        existing_ids = []
+        existing_vectors = np.array([])
+        if self._store.exists(self.library_id):
+            metadata = self._store.load_metadata(self.library_id)
+            existing_ids = metadata["ids"]
+            existing_vectors = self._store.load_vectors(self.library_id)
+
+            if len(existing_vectors) > 0 and vectors.shape[1] != existing_vectors.shape[1]:
                 raise ValueError(
-                    f"Vector dimension ({vectors_to_store.shape[1]}) "
-                    f"does not match index dimension ({self.dimension})"
+                    f"Vector dimension ({vectors.shape[1]}) "
+                    f"does not match index dimension ({existing_vectors.shape[1]})"
                 )
-            self.vectors = np.vstack([self.vectors, vectors_to_store])
 
-        # Update ID mappings
-        start_idx = len(self.ids)
-        for i, vector_id in enumerate(ids):
-            self._id_to_idx[vector_id] = start_idx + i
-            self.ids.append(vector_id)
+        # Combine and save
+        if len(existing_vectors) > 0:
+            combined_vectors = np.vstack([existing_vectors, vectors])
+        else:
+            combined_vectors = vectors
 
-        self.num_vectors = len(self.ids)
+        combined_ids = existing_ids + list(ids)
+        self.dimension = combined_vectors.shape[1]
+        self.num_vectors = len(combined_ids)
+
+        self._store.save(
+            library_id=self.library_id,
+            vectors=combined_vectors,
+            ids=combined_ids,
+            dimension=self.dimension,
+            metric=self.metric,
+        )
 
     def search(self, query_vector: np.ndarray, k: int) -> List[Tuple[str, float]]:
         """Search for k nearest neighbors.
@@ -122,16 +126,23 @@ class FlatIndex(BaseIndex):
         Raises:
             ValueError: If dimension mismatch
         """
-        if self.num_vectors == 0:
+        if not self._store.exists(self.library_id):
             return []
 
-        if query_vector.shape[0] != self.dimension:
+        metadata = self._store.load_metadata(self.library_id)
+        vectors = self._store.load_vectors(self.library_id)
+        ids = metadata["ids"]
+
+        if len(vectors) == 0:
+            return []
+
+        if query_vector.shape[0] != vectors.shape[1]:
             raise ValueError(
                 f"Query vector dimension ({query_vector.shape[0]}) "
-                f"does not match index dimension ({self.dimension})"
+                f"does not match index dimension ({vectors.shape[1]})"
             )
 
-        return similarity_search(query_vector, self.vectors, self.ids, k, self.metric)
+        return similarity_search(query_vector, vectors, ids, k, self.metric)
 
     def delete(self, ids: List[str]) -> None:
         """Delete vectors from the index by their IDs.
@@ -139,33 +150,47 @@ class FlatIndex(BaseIndex):
         Args:
             ids: List of vector IDs to delete
         """
-        if not ids:
+        if not ids or not self._store.exists(self.library_id):
             return
 
-        # Find indices to keep
+        metadata = self._store.load_metadata(self.library_id)
+        vectors = self._store.load_vectors(self.library_id)
+        existing_ids = metadata["ids"]
+
+        if len(vectors) == 0:
+            return
+
+        # Build ID to index mapping
+        id_to_idx = {id_: i for i, id_ in enumerate(existing_ids)}
+
+        # Find indices to delete
         indices_to_delete = set()
         for vector_id in ids:
-            if vector_id in self._id_to_idx:
-                indices_to_delete.add(self._id_to_idx[vector_id])
+            if vector_id in id_to_idx:
+                indices_to_delete.add(id_to_idx[vector_id])
 
         if not indices_to_delete:
             return
 
-        # Create mask for vectors to keep
-        indices_to_keep = [i for i in range(self.num_vectors) if i not in indices_to_delete]
+        # Keep vectors not in delete set
+        indices_to_keep = [i for i in range(len(existing_ids)) if i not in indices_to_delete]
+        new_vectors = vectors[indices_to_keep]
+        new_ids = [existing_ids[i] for i in indices_to_keep]
 
-        # Update vectors and IDs
-        self.vectors = self.vectors[indices_to_keep]
-        self.ids = [self.ids[i] for i in indices_to_keep]
-
-        # Rebuild ID to index mapping
-        self._id_to_idx = {vector_id: i for i, vector_id in enumerate(self.ids)}
-        self.num_vectors = len(self.ids)
-
-        # Reset if empty
-        if self.num_vectors == 0:
-            self.vectors = np.array([])
+        # Save or delete if empty
+        if len(new_ids) == 0:
+            self._store.delete_index(self.library_id)
+            self.num_vectors = 0
             self.dimension = 0
+        else:
+            self._store.save(
+                library_id=self.library_id,
+                vectors=new_vectors,
+                ids=new_ids,
+                dimension=new_vectors.shape[1],
+                metric=self.metric,
+            )
+            self.num_vectors = len(new_ids)
 
     def get_vector(self, vector_id: str) -> np.ndarray | None:
         """Get a vector by its ID.
@@ -176,10 +201,18 @@ class FlatIndex(BaseIndex):
         Returns:
             The vector as a numpy array, or None if not found
         """
-        if vector_id not in self._id_to_idx:
+        if not self._store.exists(self.library_id):
             return None
-        idx = self._id_to_idx[vector_id]
-        return self.vectors[idx]
+
+        metadata = self._store.load_metadata(self.library_id)
+        ids = metadata["ids"]
+
+        if vector_id not in ids:
+            return None
+
+        vectors = self._store.load_vectors(self.library_id)
+        idx = ids.index(vector_id)
+        return vectors[idx]
 
     def get_stats(self) -> dict:
         """Get statistics about the index.
@@ -187,10 +220,18 @@ class FlatIndex(BaseIndex):
         Returns:
             Dictionary containing index statistics
         """
+        if not self._store.exists(self.library_id):
+            return {
+                "index_type": "flat",
+                "num_vectors": 0,
+                "dimension": 0,
+                "metric": self.metric.value,
+            }
+
+        metadata = self._store.load_metadata(self.library_id)
         return {
             "index_type": "flat",
-            "num_vectors": self.num_vectors,
-            "dimension": self.dimension,
+            "num_vectors": len(metadata["ids"]),
+            "dimension": metadata["dimension"],
             "metric": self.metric.value,
-            "memory_bytes": self.vectors.nbytes if self.num_vectors > 0 else 0,
         }

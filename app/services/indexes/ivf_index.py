@@ -1,15 +1,17 @@
 """IVF (Inverted File) vector index implementation."""
 
-from pathlib import Path
+from __future__ import annotations
+
 from typing import List, Tuple
 
 import numpy as np
 
 from app.config import settings
-from app.models.enums import DistanceMetric, IndexType
+from app.models.enums import DistanceMetric
 from app.services.indexes.base import BaseIndex
 from app.services.indexes.sequential_kmeans import SequentialKMeans
 from app.services.indexes.utils import normalize_vectors, similarity_search
+from app.storage.ivf_index_store import IVFIndexStore
 
 
 class IVFIndex(BaseIndex):
@@ -21,6 +23,7 @@ class IVFIndex(BaseIndex):
 
     def __init__(
         self,
+        library_id: str,
         n_clusters: int | None = None,
         n_probe: int | None = None,
         metric: DistanceMetric = DistanceMetric.COSINE,
@@ -28,11 +31,13 @@ class IVFIndex(BaseIndex):
         """Initialize the IVF index.
 
         Args:
+            library_id: ID of the library this index belongs to
             n_clusters: Number of clusters to create (default from settings)
             n_probe: Number of clusters to search at query time (default from settings)
             metric: Distance metric for similarity search
         """
         super().__init__()
+        self.library_id = library_id
         self.n_clusters = n_clusters or settings.ivf_default_clusters
         self.n_probe = n_probe or settings.ivf_default_n_probe
         self.n_probe = min(self.n_probe, self.n_clusters)
@@ -41,12 +46,15 @@ class IVFIndex(BaseIndex):
         # Clustering algorithm
         self.kmeans = SequentialKMeans(self.n_clusters, metric)
 
-        # Per-cluster vector storage
-        self.cluster_vectors: List[np.ndarray] = []
+        # Per-cluster vector storage (None = not loaded yet, for lazy loading)
+        self.cluster_vectors: List[np.ndarray | None] = []
         self.cluster_ids: List[List[str]] = []
 
         # ID lookup: id -> (cluster_idx, position_in_cluster)
         self._id_to_location: dict[str, Tuple[int, int]] = {}
+
+        # Store reference for on-demand cluster loading
+        self._store: IVFIndexStore | None = None
 
     def add(self, vectors: np.ndarray, ids: List[str]) -> None:
         """Add vectors to the index.
@@ -89,6 +97,11 @@ class IVFIndex(BaseIndex):
             self.cluster_ids.append([])
 
         pos = len(self.cluster_ids[cluster_idx])
+
+        # Ensure cluster is loaded (may be None if lazy loading)
+        if self.cluster_vectors[cluster_idx] is None:
+            self.cluster_vectors[cluster_idx] = np.array([]).reshape(0, self.dimension)
+
         self.cluster_vectors[cluster_idx] = np.vstack(
             [self.cluster_vectors[cluster_idx], vector.reshape(1, -1)]
         )
@@ -122,13 +135,16 @@ class IVFIndex(BaseIndex):
         n_probe = min(self.n_probe, self.kmeans.num_centroids)
         probe_indices = self.kmeans.find_nearest_centroids(query_vector, n_probe)
 
-        # Gather candidates from selected clusters
+        # Gather candidates from selected clusters (loading on-demand if needed)
         candidate_vectors = []
         candidate_ids = []
         for idx in probe_indices:
             if len(self.cluster_ids[idx]) > 0:
-                candidate_vectors.append(self.cluster_vectors[idx])
-                candidate_ids.extend(self.cluster_ids[idx])
+                # Load cluster vectors on-demand if not in memory
+                vectors = self._get_cluster_vectors(idx)
+                if vectors is not None and len(vectors) > 0:
+                    candidate_vectors.append(vectors)
+                    candidate_ids.extend(self.cluster_ids[idx])
 
         if not candidate_ids:
             return []
@@ -136,6 +152,19 @@ class IVFIndex(BaseIndex):
         # Search candidates
         all_candidates = np.vstack(candidate_vectors)
         return similarity_search(query_vector, all_candidates, candidate_ids, k, self.metric)
+
+    def _get_cluster_vectors(self, cluster_idx: int) -> np.ndarray | None:
+        """Get vectors for a cluster, loading from store if needed."""
+        if self.cluster_vectors[cluster_idx] is not None:
+            return self.cluster_vectors[cluster_idx]
+
+        # Load on-demand from store
+        if self._store is None:
+            return None
+
+        vectors = self._store.load_cluster(self.library_id, cluster_idx, self.dimension)
+        self.cluster_vectors[cluster_idx] = vectors
+        return vectors
 
     def delete(self, ids: List[str]) -> None:
         """Delete vectors by ID. Does not update centroids."""
@@ -160,7 +189,11 @@ class IVFIndex(BaseIndex):
                 i not in positions_set for i in range(len(self.cluster_ids[cluster_idx]))
             ]
 
-            self.cluster_vectors[cluster_idx] = self.cluster_vectors[cluster_idx][keep_mask]
+            # Load cluster vectors if needed for deletion
+            vectors = self._get_cluster_vectors(cluster_idx)
+            if vectors is not None:
+                self.cluster_vectors[cluster_idx] = vectors[keep_mask]
+
             self.cluster_ids[cluster_idx] = [
                 id_ for i, id_ in enumerate(self.cluster_ids[cluster_idx]) if keep_mask[i]
             ]
@@ -186,12 +219,18 @@ class IVFIndex(BaseIndex):
         if vector_id not in self._id_to_location:
             return None
         cluster_idx, pos = self._id_to_location[vector_id]
-        return self.cluster_vectors[cluster_idx][pos]
+        vectors = self._get_cluster_vectors(cluster_idx)
+        if vectors is None:
+            return None
+        return vectors[pos]
 
     def get_stats(self) -> dict:
         """Get index statistics."""
         cluster_sizes = [len(ids) for ids in self.cluster_ids]
-        memory = sum(v.nbytes for v in self.cluster_vectors)
+
+        # Calculate memory for loaded clusters only
+        loaded_clusters = sum(1 for v in self.cluster_vectors if v is not None)
+        memory = sum(v.nbytes for v in self.cluster_vectors if v is not None)
         if self.kmeans.num_centroids > 0:
             memory += self.kmeans.centroids.nbytes
 
@@ -203,6 +242,7 @@ class IVFIndex(BaseIndex):
             "n_clusters": self.n_clusters,
             "n_probe": self.n_probe,
             "active_clusters": self.kmeans.num_centroids,
+            "loaded_clusters": loaded_clusters,
             "bootstrapping": self.kmeans.is_bootstrapping,
             "cluster_sizes": {
                 "min": min(cluster_sizes) if cluster_sizes else 0,
@@ -212,71 +252,69 @@ class IVFIndex(BaseIndex):
             "memory_bytes": memory,
         }
 
-    def save(self, path: Path) -> None:
-        """Save index to disk."""
-        # Flatten cluster data
-        if self.num_vectors > 0:
-            all_vectors = np.vstack(self.cluster_vectors)
-            all_ids = [id_ for ids in self.cluster_ids for id_ in ids]
-            boundaries = np.cumsum([0] + [len(ids) for ids in self.cluster_ids])
-        else:
-            all_vectors = np.array([])
-            all_ids = []
-            boundaries = np.array([])
+    def save_to_store(self, store: IVFIndexStore) -> None:
+        """Save index using the provided store.
 
-        np.savez(
-            path,
-            index_type=np.array([IndexType.IVF.value]),
-            # K-means state
+        Args:
+            store: IVFIndexStore instance to save to
+        """
+        # Save metadata
+        store.save_metadata(
+            library_id=self.library_id,
             centroids=self.kmeans.centroids,
-            cluster_counts=np.array(self.kmeans.cluster_counts),
-            # Vector storage
-            all_vectors=all_vectors,
-            all_ids=np.array(all_ids, dtype=object),
-            cluster_boundaries=boundaries,
-            # Config
-            config=np.array([self.n_clusters, self.n_probe, self.dimension]),
-            metric=np.array([self.metric.value]),
+            cluster_counts=self.kmeans.cluster_counts,
+            cluster_ids=self.cluster_ids,
+            n_clusters=self.n_clusters,
+            n_probe=self.n_probe,
+            dimension=self.dimension,
+            metric=self.metric,
         )
+
+        # Save each cluster's vectors
+        for i, vectors in enumerate(self.cluster_vectors):
+            if vectors is not None and len(vectors) > 0:
+                store.save_cluster(self.library_id, i, vectors)
 
     @classmethod
-    def load(cls, path: Path) -> "IVFIndex":
-        """Load index from disk."""
-        data = np.load(path, allow_pickle=True)
+    def load_from_store(cls, store: IVFIndexStore, library_id: str) -> "IVFIndex":
+        """Load index from store (metadata only, vectors loaded on-demand).
 
-        config = data["config"]
-        metric = DistanceMetric(data["metric"][0])
+        Args:
+            store: IVFIndexStore instance to load from
+            library_id: ID of the library to load
+
+        Returns:
+            IVFIndex with metadata loaded, vectors loaded on-demand during search
+        """
+        metadata = store.load_metadata(library_id)
 
         index = cls(
-            n_clusters=int(config[0]),
-            n_probe=int(config[1]),
-            metric=metric,
+            library_id=library_id,
+            n_clusters=metadata["n_clusters"],
+            n_probe=metadata["n_probe"],
+            metric=metadata["metric"],
         )
-        index.dimension = int(config[2])
+        index.dimension = metadata["dimension"]
 
         # Restore k-means state
-        index.kmeans.centroids = data["centroids"]
-        index.kmeans.cluster_counts = data["cluster_counts"].tolist()
+        index.kmeans.centroids = metadata["centroids"]
+        index.kmeans.cluster_counts = metadata["cluster_counts"]
         index.kmeans.dimension = index.dimension
 
-        # Restore cluster storage
-        all_vectors = data["all_vectors"]
-        all_ids = data["all_ids"].tolist()
-        boundaries = data["cluster_boundaries"].tolist()
+        # Restore cluster IDs (small, keep in memory)
+        index.cluster_ids = metadata["cluster_ids"]
 
-        for i in range(len(boundaries) - 1):
-            start, end = boundaries[i], boundaries[i + 1]
-            if start < end:
-                index.cluster_vectors.append(all_vectors[start:end])
-                index.cluster_ids.append(all_ids[start:end])
-            else:
-                index.cluster_vectors.append(np.array([]).reshape(0, index.dimension))
-                index.cluster_ids.append([])
+        # Initialize cluster_vectors as None placeholders (loaded on-demand)
+        index.cluster_vectors = [None] * len(index.cluster_ids)
 
         # Rebuild ID lookup
         for cluster_idx, ids in enumerate(index.cluster_ids):
             for pos, id_ in enumerate(ids):
                 index._id_to_location[id_] = (cluster_idx, pos)
 
-        index.num_vectors = len(all_ids)
+        index.num_vectors = sum(len(ids) for ids in index.cluster_ids)
+
+        # Store reference for on-demand loading
+        index._store = store
+
         return index

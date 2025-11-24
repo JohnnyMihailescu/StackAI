@@ -40,8 +40,10 @@ class ChunkStore(BaseStore[Chunk]):
             if chunk.id in self._data:
                 raise ValueError(f"Chunk with id '{chunk.id}' already exists")
 
-            # Store chunk (embedding excluded via for_storage() in _save)
-            self._data[chunk.id] = chunk.model_copy()
+            # Store chunk without embedding (embeddings live in the index only)
+            stored_chunk = chunk.model_copy()
+            stored_chunk.embedding = None
+            self._data[chunk.id] = stored_chunk
 
             if self._persist:
                 self._save()
@@ -55,8 +57,11 @@ class ChunkStore(BaseStore[Chunk]):
             if existing:
                 raise ValueError(f"Chunks with these IDs already exist: {existing}")
 
+            # Store chunks without embeddings (embeddings live in the index only)
             for chunk in chunks:
-                self._data[chunk.id] = chunk.model_copy()
+                stored_chunk = chunk.model_copy()
+                stored_chunk.embedding = None
+                self._data[chunk.id] = stored_chunk
 
             if self._persist:
                 self._save()

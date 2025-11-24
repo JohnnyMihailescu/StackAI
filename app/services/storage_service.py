@@ -5,7 +5,8 @@ from pathlib import Path
 from app.config import settings
 from app.storage.chunk_store import ChunkStore
 from app.storage.document_store import DocumentStore
-from app.storage.index_store import IndexStore
+from app.storage.flat_index_store import FlatIndexStore
+from app.storage.ivf_index_store import IVFIndexStore
 from app.storage.library_store import LibraryStore
 
 
@@ -21,7 +22,8 @@ class StorageService:
     _libraries: LibraryStore | None = None
     _documents: DocumentStore | None = None
     _chunks: ChunkStore | None = None
-    _indexes: IndexStore | None = None
+    _flat_index_store: FlatIndexStore | None = None
+    _ivf_index_store: IVFIndexStore | None = None
 
     @classmethod
     async def initialize(cls, persist: bool = True, data_dir: str | None = None) -> None:
@@ -32,12 +34,14 @@ class StorageService:
         cls._libraries = LibraryStore(path, persist=persist)
         cls._documents = DocumentStore(path, persist=persist)
         cls._chunks = ChunkStore(path, persist=persist)
-        cls._indexes = IndexStore(data_dir=path / "indexes", persist=persist)
+
+        index_path = path / "indexes"
+        cls._flat_index_store = FlatIndexStore(data_dir=index_path, persist=persist)
+        cls._ivf_index_store = IVFIndexStore(data_dir=index_path, persist=persist)
 
         await cls._libraries.load()
         await cls._documents.load()
         await cls._chunks.load()
-        await cls._indexes.load()
 
     @classmethod
     def libraries(cls) -> LibraryStore:
@@ -61,20 +65,30 @@ class StorageService:
         return cls._chunks
 
     @classmethod
-    def indexes(cls) -> IndexStore:
-        """Get the index store."""
-        if cls._indexes is None:
+    def flat_index_store(cls) -> FlatIndexStore:
+        """Get the flat index store."""
+        if cls._flat_index_store is None:
             raise RuntimeError("StorageService not initialized")
-        return cls._indexes
+        return cls._flat_index_store
+
+    @classmethod
+    def ivf_index_store(cls) -> IVFIndexStore:
+        """Get the IVF index store."""
+        if cls._ivf_index_store is None:
+            raise RuntimeError("StorageService not initialized")
+        return cls._ivf_index_store
 
     @classmethod
     def get_stats(cls) -> dict:
         """Get storage statistics."""
+        flat_count = len(cls._flat_index_store.list_libraries()) if cls._flat_index_store else 0
+        ivf_count = len(cls._ivf_index_store.list_libraries()) if cls._ivf_index_store else 0
         return {
             "libraries": len(cls._libraries._data) if cls._libraries else 0,
             "documents": len(cls._documents._data) if cls._documents else 0,
             "chunks": len(cls._chunks._data) if cls._chunks else 0,
-            "indexes": len(cls._indexes._indexes) if cls._indexes else 0,
+            "flat_indexes": flat_count,
+            "ivf_indexes": ivf_count,
         }
 
     @classmethod
@@ -86,5 +100,5 @@ class StorageService:
             await cls._documents.clear()
         if cls._chunks:
             await cls._chunks.clear()
-        if cls._indexes:
-            await cls._indexes.clear()
+        # Index stores don't have async clear - they're stateless
+        # Clearing is done by deleting files, which happens when indexes are deleted
